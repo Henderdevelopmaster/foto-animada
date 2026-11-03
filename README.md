@@ -1,4 +1,4 @@
-# Foto Animada
+# Camaratrix
 
 App Android para tomar **fotos animadas** (tipo Live Photo de iPhone), sin anuncios.
 

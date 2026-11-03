@@ -19,6 +19,10 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
+import android.util.Rational
+import android.view.Surface
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -169,9 +173,17 @@ class MainActivity : ComponentActivity() {
             .also { it.setAnalyzer(analysisExecutor, recorder) }
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        // Mismo encuadre 3:4 para vista previa, foto y video
+        val viewPort = ViewPort.Builder(Rational(3, 4), Surface.ROTATION_0).build()
+        val group = UseCaseGroup.Builder()
+            .setViewPort(viewPort)
+            .addUseCase(preview)
+            .addUseCase(capture)
+            .addUseCase(analysis)
+            .build()
         try {
             provider.unbindAll()
-            provider.bindToLifecycle(this, selector, preview, capture, analysis)
+            provider.bindToLifecycle(this, selector, group)
             imageCapture = capture
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo abrir la cámara", e)

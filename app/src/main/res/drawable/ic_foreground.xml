@@ -1,17 +1,18 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <!-- cuerpo -->
-    <path android:fillColor="#2B2D31"
+    <!-- cuerpo blanco -->
+    <path android:fillColor="#FFFFFF"
         android:pathData="M36,40h7l4,-5h14l4,5h7a5,5 0,0 1,5 5v24a5,5 0,0 1,-5 5H36a5,5 0,0 1,-5 -5V45a5,5 0,0 1,5 -5z" />
-    <!-- anillos LIVE -->
-    <path android:strokeColor="#FFC107" android:strokeWidth="2" android:fillColor="#00000000"
-        android:pathData="M54,42.5a14.5,14.5 0,1 1,0 29a14.5,14.5 0,1 1,0 -29z" />
-    <path android:fillColor="#111214"
-        android:pathData="M54,46a11,11 0,1 1,0 22a11,11 0,1 1,0 -22z" />
-    <path android:fillColor="#3D5AFE"
-        android:pathData="M54,50a7,7 0,1 1,0 14a7,7 0,1 1,0 -14z" />
-    <path android:fillColor="#FFC107"
-        android:pathData="M54,54a3,3 0,1 1,0 6a3,3 0,1 1,0 -6z" />
-    <path android:fillColor="#88FFFFFF"
-        android:pathData="M51,52.5a1.6,1.6 0,1 1,0 3.2a1.6,1.6 0,1 1,0 -3.2z" />
+    <!-- lente -->
+    <path android:fillColor="#0D3B1E"
+        android:pathData="M54,44a13,13 0,1 1,0 26a13,13 0,1 1,0 -26z" />
+    <path android:strokeColor="#69F0AE" android:strokeWidth="1.6" android:fillColor="#00000000"
+        android:pathData="M54,48a9,9 0,1 1,0 18a9,9 0,1 1,0 -18z" />
+    <path android:fillColor="#00E676"
+        android:pathData="M54,52.5a4.5,4.5 0,1 1,0 9a4.5,4.5 0,1 1,0 -9z" />
+    <path android:fillColor="#CCFFFFFF"
+        android:pathData="M50.5,50a1.8,1.8 0,1 1,0 3.6a1.8,1.8 0,1 1,0 -3.6z" />
+    <!-- punto LIVE -->
+    <path android:fillColor="#00C853"
+        android:pathData="M70,46a2.2,2.2 0,1 1,0 4.4a2.2,2.2 0,1 1,0 -4.4z" />
 </vector>

@@ -47,6 +47,8 @@ class MotionRecorder(
     private var height = 0
     private var rotation = 0
     private var rowTmp = ByteArray(0)
+    private var cropX = 0
+    private var cropY = 0
 
     private val buffer = ArrayDeque<Sample>()
     private val pending = AtomicReference<((Clip?) -> Unit)?>(null)
@@ -68,7 +70,14 @@ class MotionRecorder(
                 return
             }
             rotation = image.imageInfo.rotationDegrees
-            val enc = ensureEncoder(image.width, image.height)
+            // Usar solo el recorte común (ViewPort) para que el video tenga
+            // el mismo encuadre que la foto. Tamaño múltiplo de 16 para el encoder.
+            val crop = image.cropRect
+            val cw = (crop.width() / 16) * 16
+            val ch = (crop.height() / 16) * 16
+            cropX = (crop.left + (crop.width() - cw) / 2) and 1.inv()
+            cropY = (crop.top + (crop.height() - ch) / 2) and 1.inv()
+            val enc = ensureEncoder(cw, ch)
             // Mismo reloj que el audio (System.nanoTime)
             val ptsUs = System.nanoTime() / 1000
 
@@ -209,9 +218,11 @@ class MotionRecorder(
             val dPix = dp.pixelStride
             val srcRowLen = (w - 1) * sPix + 1
             if (rowTmp.size < srcRowLen) rowTmp = ByteArray(srcRowLen)
+            val ox = if (p == 0) cropX else cropX / 2
+            val oy = if (p == 0) cropY else cropY / 2
 
             for (y in 0 until h) {
-                sBuf.position(y * sRow)
+                sBuf.position((y + oy) * sRow + ox * sPix)
                 sBuf.get(rowTmp, 0, srcRowLen)
                 if (sPix == 1 && dPix == 1) {
                     dBuf.position(y * dRow)

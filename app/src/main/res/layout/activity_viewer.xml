@@ -9,74 +9,125 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Barra superior -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:layout_marginTop="28dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="8dp">
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:paddingBottom="10dp"
+        android:paddingTop="30dp">
 
-        <ImageButton
-            android:id="@+id/back"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Volver"
-            android:src="@drawable/ic_back" />
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="48dp">
+
+            <ImageButton
+                android:id="@+id/back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="6dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Volver"
+                android:src="@drawable/ic_back" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/subtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#99FFFFFF"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </FrameLayout>
 
         <TextView
-            android:id="@+id/liveBadge"
+            android:id="@+id/fxChip"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/bg_badge"
-            android:drawablePadding="4dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_chip"
+            android:drawableEnd="@drawable/ic_chevron"
+            android:drawablePadding="6dp"
+            android:drawableStart="@drawable/ic_live_small"
             android:gravity="center_vertical"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="3dp"
+            android:paddingHorizontal="10dp"
             android:text="LIVE"
             android:textColor="#FFFFFF"
             android:textSize="12sp"
             android:textStyle="bold" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/hint"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="110dp"
-        android:text="Mantén presionado para ver el movimiento"
-        android:textColor="#99FFFFFF"
-        android:textSize="12sp" />
-
+    <!-- Parte inferior -->
     <LinearLayout
         android:id="@+id/bottomBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:layout_marginBottom="36dp"
-        android:gravity="center"
-        android:orientation="horizontal">
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:paddingBottom="28dp"
+        android:paddingTop="8dp">
 
-        <ImageButton
-            android:id="@+id/share"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:layout_marginEnd="64dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Compartir"
-            android:src="@drawable/ic_share" />
+        <TextView
+            android:id="@+id/hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="8dp"
+            android:textColor="#99FFFFFF"
+            android:textSize="12sp" />
 
-        <ImageButton
-            android:id="@+id/delete"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Eliminar"
-            android:src="@drawable/ic_delete" />
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/strip"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:clipToPadding="false" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <ImageButton
+                android:id="@+id/share"
+                android:layout_width="56dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Compartir"
+                android:src="@drawable/ic_share" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <ImageButton
+                android:id="@+id/delete"
+                android:layout_width="56dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Eliminar"
+                android:src="@drawable/ic_delete" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>
