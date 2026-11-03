@@ -177,6 +177,26 @@ class FaceGeom(
         }
     }
 
+    fun scaled(k: Float) = FaceGeom(
+        PointF(leftEye.x * k, leftEye.y * k), PointF(rightEye.x * k, rightEye.y * k),
+        PointF(nose.x * k, nose.y * k), PointF(mouth.x * k, mouth.y * k),
+        PointF(leftCheek.x * k, leftCheek.y * k), PointF(rightCheek.x * k, rightCheek.y * k),
+        faceWidth * k, angle, mouthOpen, smile, id
+    )
+
+    /** Mezcla suave con la cara anterior para que los stickers no tiemblen. */
+    fun smoothFrom(prev: FaceGeom?, a: Float): FaceGeom {
+        if (prev == null || hypot(prev.nose.x - nose.x, prev.nose.y - nose.y) > faceWidth * 0.6f) return this
+        fun l(p: PointF, q: PointF) = PointF(q.x + (p.x - q.x) * a, q.y + (p.y - q.y) * a)
+        return FaceGeom(
+            l(leftEye, prev.leftEye), l(rightEye, prev.rightEye), l(nose, prev.nose), l(mouth, prev.mouth),
+            l(leftCheek, prev.leftCheek), l(rightCheek, prev.rightCheek),
+            prev.faceWidth + (faceWidth - prev.faceWidth) * a,
+            prev.angle + (angle - prev.angle) * a,
+            mouthOpen, smile, id
+        )
+    }
+
     companion object {
         /** De ML Kit a nuestra geometría. width = ancho de la imagen (para espejar). */
         fun from(face: Face, imageWidth: Int, mirror: Boolean): FaceGeom? {
@@ -244,7 +264,6 @@ class EffectRenderer(private val context: Context) {
     fun render(canvas: Canvas, frame: Bitmap, faces: List<FaceGeom>, effect: FaceEffect, nowMs: Long, outW: Int, outH: Int) {
         val sx = outW.toFloat() / frame.width
         val sy = outH.toFloat() / frame.height
-        val s = min(sx, sy)
         canvas.drawColor(Color.BLACK)
 
         // 1) Imagen base, con deformación si hay
@@ -276,6 +295,14 @@ class EffectRenderer(private val context: Context) {
         if (effect.glitch) drawGlitch(canvas, frame, nowMs, sx, sy)
         if (effect.scanlines) drawScanlines(canvas, outW, outH)
 
+        drawOverlay(canvas, faces, effect, nowMs, sx, sy)
+    }
+
+    /** Solo stickers y partículas (para pintar encima de la vista previa normal). */
+    fun drawOverlay(canvas: Canvas, faces: List<FaceGeom>, effect: FaceEffect, nowMs: Long, sx: Float, sy: Float) {
+        paint.colorFilter = null
+        paint.alpha = 255
+        val face = faces.firstOrNull()
         // 2) Stickers en cada cara
         for (f in faces) {
             for (st in effect.stickers) {
@@ -301,6 +328,13 @@ class EffectRenderer(private val context: Context) {
         // 3) Partículas que flotan alrededor de la cara
         effect.particles?.let { p -> drawParticles(canvas, p, effect, face, nowMs, sx, sy) }
         lastMs = nowMs
+    }
+
+    val hasParticles get() = particles.isNotEmpty()
+
+    companion object {
+        /** ¿El efecto cambia la imagen entera? (si no, basta con pintar encima). */
+        fun needsFrame(e: FaceEffect) = e.warp != null || e.glitch || e.scanlines || e.mirror
     }
 
     private fun colorFilter(effect: FaceEffect, nowMs: Long): ColorMatrixColorFilter? {

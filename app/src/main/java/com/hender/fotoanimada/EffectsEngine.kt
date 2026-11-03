@@ -10,9 +10,11 @@ import android.graphics.RectF
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.util.AttributeSet
 import android.util.Log
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.android.gms.tasks.Tasks
@@ -25,13 +27,54 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Modo EFECTOS: cada cuadro de la cámara pasa por aquí.
- * Detecta caras, dibuja el efecto, lo muestra en pantalla y, si se está grabando, lo manda al video.
+ * Capa que dibuja stickers y partículas encima de la vista previa normal.
+ * Así la cámara va fluida (la pinta la GPU) y solo los stickers se dibujan aquí.
  */
-class EffectsEngine(private val context: Context, private val view: TextureView) : ImageAnalysis.Analyzer {
+class FaceOverlayView @JvmOverloads constructor(
+    context: Context, attrs: AttributeSet? = null,
+) : View(context, attrs) {
+
+    private val renderer = EffectRenderer(context)
+
+    @Volatile
+    var faces: List<FaceGeom> = emptyList()
 
     @Volatile
     var effect: FaceEffect? = null
+
+    /** Ancho de la imagen analizada (para convertir a pixeles de la vista). */
+    @Volatile
+    var imageWidth = 0
+
+    override fun onDraw(canvas: Canvas) {
+        val fx = effect ?: return
+        if (imageWidth <= 0) return
+        val s = width.toFloat() / imageWidth
+        renderer.drawOverlay(canvas, faces, fx, System.currentTimeMillis(), s, s)
+        if (fx.particles != null) postInvalidateOnAnimation()
+    }
+}
+
+/**
+ * Modo EFECTOS: recibe los cuadros de la cámara.
+ * - La detección de caras corre aparte (no frena la imagen).
+ * - Si el efecto solo pone stickers, se pintan encima de la vista previa normal.
+ * - Si el efecto cambia la imagen (deformar, glitch, espejo) se dibuja el cuadro completo.
+ * - Al grabar, cada cuadro con su efecto va al video.
+ */
+class EffectsEngine(
+    private val context: Context,
+    private val frameView: TextureView,
+    private val overlay: FaceOverlayView,
+) : ImageAnalysis.Analyzer {
+
+    @Volatile
+    var effect: FaceEffect? = null
+        set(v) {
+            field = v
+            overlay.effect = v
+            overlay.post { updateViews() }
+        }
 
     @Volatile
     var mirror = true
@@ -39,23 +82,35 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
     @Volatile
     var audio: AudioRingRecorder? = null
 
-    private val detector: FaceDetector = FaceDetection.getClient(
-        FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-            .setMinFaceSize(0.15f)
-            .build()
-    )
+    private fun options(contours: Boolean) = FaceDetectorOptions.Builder()
+        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+        .setContourMode(if (contours) FaceDetectorOptions.CONTOUR_MODE_ALL else FaceDetectorOptions.CONTOUR_MODE_NONE)
+        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+        .setMinFaceSize(0.15f)
+        .build()
+
+    // Sin contornos es mucho más rápido; solo se usan si el efecto reacciona a la boca
+    private val fast: FaceDetector = FaceDetection.getClient(options(false))
+    private val withContours: FaceDetector = FaceDetection.getClient(options(true))
+    private val detecting = AtomicBoolean(false)
+
+    @Volatile
+    private var faces: List<FaceGeom> = emptyList()
+    private var lastFaceMs = 0L
+
     private val renderer = EffectRenderer(context)
     private var upright: Bitmap? = null
+    private var small: Bitmap? = null
     private var out: Bitmap? = null
     private val m = Matrix()
 
     // Grabación
     private val recStart = AtomicBoolean(false)
     private val recStop = AtomicReference<((MotionRecorder.Clip?) -> Unit)?>(null)
+
+    @Volatile
+    private var recording = false
     private var encoder: MediaCodec? = null
     private var encSurface: Surface? = null
     private var encFormat: MediaFormat? = null
@@ -69,6 +124,17 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
         recStop.getAndSet(cb)?.invoke(null)
     }
 
+    private fun fullFrame(fx: FaceEffect) = EffectRenderer.needsFrame(fx)
+
+    /** Muestra la capa de cuadro completo o la de stickers según el efecto. */
+    private fun updateViews() {
+        val fx = effect ?: return
+        val full = fullFrame(fx)
+        frameView.visibility = if (full) View.VISIBLE else View.INVISIBLE
+        overlay.visibility = if (full) View.INVISIBLE else View.VISIBLE
+        overlay.invalidate()
+    }
+
     override fun analyze(image: ImageProxy) {
         try {
             val fx = effect ?: return
@@ -77,13 +143,14 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
             val uw = if (rot % 180 == 0) src.width else src.height
             val uh = if (rot % 180 == 0) src.height else src.width
 
-            // Imagen derecha y espejada (selfie), como se ve en pantalla
             var up = upright
             if (up == null || up.width != uw || up.height != uh) {
                 up = Bitmap.createBitmap(uw, uh, Bitmap.Config.ARGB_8888)
                 upright = up
                 out = Bitmap.createBitmap(uw, uh, Bitmap.Config.ARGB_8888)
+                small = Bitmap.createBitmap(uw / 2, uh / 2, Bitmap.Config.ARGB_8888)
             }
+            // Imagen derecha y espejada (selfie), como se ve en pantalla
             m.reset()
             m.postRotate(rot.toFloat())
             val r = RectF(0f, 0f, src.width.toFloat(), src.height.toFloat())
@@ -92,18 +159,24 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
             if (mirror) m.postScale(-1f, 1f, uw / 2f, 0f)
             Canvas(up!!).drawBitmap(src, m, null)
             src.recycle()
+            overlay.imageWidth = uw
 
-            val faces = if (fx.isNone) emptyList() else try {
-                Tasks.await(detector.process(InputImage.fromBitmap(up, 0)), 400, TimeUnit.MILLISECONDS)
-                    .mapNotNull { FaceGeom.from(it, uw, false) }
-            } catch (_: Exception) {
-                emptyList()
+            detectAsync(up, fx, uw)
+
+            // Si no hay cara hace rato, quitar los stickers
+            if (System.currentTimeMillis() - lastFaceMs > 600 && faces.isNotEmpty()) {
+                faces = emptyList()
+                overlay.faces = faces
+                overlay.postInvalidate()
             }
 
-            val o = out!!
-            renderer.render(Canvas(o), up, faces, fx, System.currentTimeMillis(), uw, uh)
-            show(o)
-            record(o)
+            val needOut = fullFrame(fx) || recording || recStart.get() || recStop.get() != null
+            if (needOut) {
+                val o = out!!
+                renderer.render(Canvas(o), up, faces, fx, System.currentTimeMillis(), uw, uh)
+                if (fullFrame(fx)) show(o)
+                record(o)
+            }
         } catch (e: Exception) {
             Log.e("Effects", "Cuadro", e)
         } finally {
@@ -111,21 +184,43 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
         }
     }
 
-    /** Pinta el resultado en pantalla, pegado arriba como la vista previa normal. */
+    /** Detecta caras sobre una copia pequeña, sin hacer esperar al cuadro. */
+    private fun detectAsync(up: Bitmap, fx: FaceEffect, uw: Int) {
+        if (fx.isNone || !detecting.compareAndSet(false, true)) return
+        val sm = small!!
+        Canvas(sm).drawBitmap(up, null, Rect(0, 0, sm.width, sm.height), null)
+        val copy = sm.copy(Bitmap.Config.ARGB_8888, false)
+        val needMouth = fx.stickers.any { it.trigger == "mouthOpen" }
+        val det = if (needMouth) withContours else fast
+        val k = uw.toFloat() / copy.width
+        det.process(InputImage.fromBitmap(copy, 0))
+            .addOnSuccessListener { list ->
+                val prev = faces
+                val geoms = list.mapNotNull { FaceGeom.from(it, copy.width, false)?.scaled(k) }
+                    .mapIndexed { i, g -> g.smoothFrom(prev.getOrNull(i), 0.65f) }
+                if (geoms.isNotEmpty()) lastFaceMs = System.currentTimeMillis()
+                faces = geoms
+                overlay.faces = geoms
+                overlay.postInvalidate()
+            }
+            .addOnCompleteListener {
+                copy.recycle()
+                detecting.set(false)
+            }
+    }
+
     private fun show(bmp: Bitmap) {
-        if (!view.isAvailable) return
-        val c = view.lockCanvas() ?: return
+        if (!frameView.isAvailable) return
+        val c = frameView.lockCanvas() ?: return
         try {
             c.drawColor(Color.BLACK)
             val s = minOf(c.width.toFloat() / bmp.width, c.height.toFloat() / bmp.height)
-            val dx = (c.width - bmp.width * s) / 2f
             c.save()
-            c.translate(dx, 0f)
             c.scale(s, s)
             c.drawBitmap(bmp, 0f, 0f, null)
             c.restore()
         } finally {
-            view.unlockCanvasAndPost(c)
+            frameView.unlockCanvasAndPost(c)
         }
     }
 
@@ -147,6 +242,7 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
                 encoder = e
                 encFormat = null
                 samples.clear()
+                recording = true
             } catch (ex: Exception) {
                 Log.e("Effects", "Encoder", ex)
                 encoder = null
@@ -161,6 +257,7 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
             drain(e, false)
         }
         recStop.getAndSet(null)?.let { cb ->
+            recording = false
             if (e == null) {
                 cb(null)
             } else {
@@ -225,7 +322,8 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
         encoder = null
         encSurface?.release()
         encSurface = null
-        detector.close()
+        fast.close()
+        withContours.close()
     }
 
     companion object {
@@ -239,13 +337,17 @@ class EffectsEngine(private val context: Context, private val view: TextureView)
                     .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                     .build()
             )
+            // Detectar en una copia reducida (rápido) y escalar el resultado
+            val k = (1280f / maxOf(photo.width, photo.height)).coerceAtMost(1f)
+            val probe = if (k < 1f) Bitmap.createScaledBitmap(photo, (photo.width * k).toInt(), (photo.height * k).toInt(), true) else photo
             val faces = try {
-                Tasks.await(det.process(InputImage.fromBitmap(photo, 0)), 8, TimeUnit.SECONDS)
-                    .mapNotNull { FaceGeom.from(it, photo.width, false) }
+                Tasks.await(det.process(InputImage.fromBitmap(probe, 0)), 8, TimeUnit.SECONDS)
+                    .mapNotNull { FaceGeom.from(it, probe.width, false)?.scaled(1f / k) }
             } catch (_: Exception) {
                 emptyList()
             } finally {
                 det.close()
+                if (probe !== photo) probe.recycle()
             }
             val out = Bitmap.createBitmap(photo.width, photo.height, Bitmap.Config.ARGB_8888)
             EffectRenderer(context).render(Canvas(out), photo, faces, effect, System.currentTimeMillis(), photo.width, photo.height)

@@ -32,12 +32,13 @@
             <TextView
                 android:id="@+id/resButton"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:drawablePadding="3dp"
-                android:drawableStart="@drawable/ic_settings"
-                android:gravity="center_vertical"
-                android:paddingHorizontal="8dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_res_pill"
+                android:gravity="center"
+                android:letterSpacing="0.05"
+                android:minWidth="52dp"
+                android:paddingHorizontal="9dp"
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
                 android:textStyle="bold" />
@@ -88,6 +89,12 @@
 
         <TextureView
             android:id="@+id/effectView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.hender.fotoanimada.FaceOverlayView
+            android:id="@+id/faceOverlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />
@@ -220,7 +227,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_filter_bar"
+            android:paddingBottom="10dp"
+            android:paddingTop="26dp"
             android:scrollbars="none"
             android:visibility="gone">
 

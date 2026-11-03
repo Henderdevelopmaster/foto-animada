@@ -86,6 +86,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var modeHint: TextView
     private lateinit var qrChip: TextView
     private lateinit var effectView: TextureView
+    private lateinit var faceOverlay: FaceOverlayView
     private lateinit var effectBar: HorizontalScrollView
     private lateinit var effectList: LinearLayout
     private lateinit var effectName: TextView
@@ -164,10 +165,11 @@ class MainActivity : ComponentActivity() {
         modeHint = findViewById(R.id.modeHint)
         qrChip = findViewById(R.id.qrChip)
         effectView = findViewById(R.id.effectView)
+        faceOverlay = findViewById(R.id.faceOverlay)
         effectBar = findViewById(R.id.effectBar)
         effectList = findViewById(R.id.effectList)
         effectName = findViewById(R.id.effectName)
-        engine = EffectsEngine(this, effectView)
+        engine = EffectsEngine(this, effectView, faceOverlay)
         engine.audio = audio
         effectId = prefs.getString(KEY_EFFECT, "perrito") ?: "perrito"
         instantLook = InstantLook.fromId(prefs.getString(KEY_LOOK, null))
@@ -221,7 +223,14 @@ class MainActivity : ComponentActivity() {
             showToast(if (liveOn) "LIVE activado" else "LIVE desactivado")
         }
         filterButton.setOnClickListener {
-            filterBar.visibility = if (filterBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            val show = filterBar.visibility != View.VISIBLE
+            filterBar.visibility = if (show) View.VISIBLE else View.GONE
+            if (show) {
+                refreshFilterThumbs()
+                filterBar.alpha = 0f
+                filterBar.translationY = dp(20).toFloat()
+                filterBar.animate().alpha(1f).translationY(0f).setDuration(180).start()
+            }
             tap(it)
         }
         timerButton.setOnClickListener {
@@ -352,6 +361,7 @@ class MainActivity : ComponentActivity() {
         effectId = fx.id
         prefs.edit().putString(KEY_EFFECT, fx.id).apply()
         engine.effect = fx
+        applyPreviewFilter()
         for (i in 0 until effectList.childCount) {
             val v = effectList.getChildAt(i)
             v.isSelected = v.tag == fx.id
@@ -487,8 +497,12 @@ class MainActivity : ComponentActivity() {
         else PreviewView.ScaleType.FIT_START
         captionPill.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
         val fxMode = mode == Mode.EFFECTS
-        effectView.visibility = if (fxMode) View.VISIBLE else View.GONE
-        previewView.alpha = if (fxMode) 0f else 1f
+        if (fxMode) {
+            engine.effect = engine.effect // muestra la capa que toque
+        } else {
+            effectView.visibility = View.GONE
+            faceOverlay.visibility = View.GONE
+        }
         effectBar.visibility = if (fxMode) View.VISIBLE else View.GONE
         effectName.visibility = if (fxMode) View.VISIBLE else View.GONE
         engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
@@ -553,34 +567,130 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Panel inferior de calidad, con botones segmentados tipo iPhone. */
     private fun showResolutionMenu() {
         if (busy || recording != null) return
-        val sections = listOf(
-            Triple("Foto", CameraSettings.PHOTO, CameraSettings.photoOptions) to CameraSettings.photo(this),
-            Triple("Video (modo VIDEO)", CameraSettings.VIDEO, CameraSettings.videoOptions) to CameraSettings.video(this),
-            Triple("Live, QuickTake y time-lapse", CameraSettings.LIVE, CameraSettings.liveOptions) to CameraSettings.live(this),
-            Triple("Video con efectos", CameraSettings.EFFECTS, CameraSettings.effectsOptions) to CameraSettings.effects(this),
-        )
-        val names = sections.map { (t, cur) -> t.first + "\n   " + (t.third.firstOrNull { it.id == cur }?.label ?: "") }
-        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Resolución")
-            .setItems(names.toTypedArray()) { _, which ->
-                val (t, cur) = sections[which]
-                val idx = t.third.indexOfFirst { it.id == cur }.coerceAtLeast(0)
-                android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                    .setTitle(t.first)
-                    .setSingleChoiceItems(t.third.map { it.label }.toTypedArray(), idx) { d, i ->
-                        CameraSettings.set(this, t.second, t.third[i].id)
-                        d.dismiss()
-                        updateResLabel()
-                        bindCamera()
-                        if (t.second == CameraSettings.PHOTO && t.third[i].id == "max") {
-                            showToast("Las fotos de 200 MP pesan mucho y tardan más en guardarse")
-                        }
-                    }
-                    .show()
+        val dialog = android.app.Dialog(this)
+        var changed = false
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_sheet)
+            setPadding(dp(20), dp(10), dp(20), dp(28))
+        }
+        root.addView(View(this).apply { setBackgroundResource(R.drawable.bg_handle) },
+            LinearLayout.LayoutParams(dp(38), dp(5)).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL; bottomMargin = dp(16) })
+        root.addView(TextView(this).apply {
+            text = "Calidad"
+            textSize = 21f
+            setTextColor(0xFFFFFFFF.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        root.addView(TextView(this).apply {
+            text = "Más calidad = archivos más pesados"
+            textSize = 13f
+            setTextColor(0x8CFFFFFF.toInt())
+            setPadding(0, dp(2), 0, dp(10))
+        })
+
+        data class Seg(val id: String, val label: String, val note: String)
+        fun section(title: String, key: String, segs: List<Seg>) {
+            root.addView(TextView(this).apply {
+                text = title.uppercase()
+                textSize = 11.5f
+                letterSpacing = 0.06f
+                setTextColor(0x8CFFFFFF.toInt())
+                setPadding(dp(2), dp(16), 0, dp(8))
+            })
+            val bar = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundResource(R.drawable.bg_segmented)
+                setPadding(dp(3), dp(3), dp(3), dp(3))
             }
-            .show()
+            val note = TextView(this).apply {
+                textSize = 12.5f
+                setTextColor(0xB3FFFFFF.toInt())
+                setPadding(dp(2), dp(7), 0, 0)
+            }
+            fun paint(current: String) {
+                for (i in 0 until bar.childCount) {
+                    val v = bar.getChildAt(i) as TextView
+                    val on = v.tag == current
+                    v.setBackgroundResource(if (on) R.drawable.bg_segment_on else 0)
+                    v.setTextColor(if (on) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                }
+                note.text = segs.firstOrNull { it.id == current }?.note ?: ""
+            }
+            for (sg in segs) {
+                bar.addView(TextView(this).apply {
+                    text = sg.label
+                    tag = sg.id
+                    textSize = 14f
+                    gravity = android.view.Gravity.CENTER
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setOnClickListener {
+                        CameraSettings.set(this@MainActivity, key, sg.id)
+                        changed = true
+                        it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        paint(sg.id)
+                    }
+                }, LinearLayout.LayoutParams(0, dp(36), 1f))
+            }
+            root.addView(bar, LinearLayout.LayoutParams(-1, -2))
+            root.addView(note)
+            paint(CameraSettings.get(this, key, segs[segs.size / 2].id).let { cur ->
+                if (segs.any { it.id == cur }) cur else segs.first().id
+            })
+        }
+
+        section("Foto", CameraSettings.PHOTO, listOf(
+            Seg("3", "3 MP", "Ocupa poco espacio"),
+            Seg("8", "8 MP", "Equilibrada"),
+            Seg("12", "12 MP", "Recomendada"),
+            Seg("max", "MÁX", "Hasta 200 MP · tarda más y cada foto pesa mucho"),
+        ))
+        section("Video", CameraSettings.VIDEO, listOf(
+            Seg("hd", "720p", "Más liviano"),
+            Seg("fhd", "1080p", "Recomendado"),
+            Seg("uhd", "4K", "Máxima nitidez · ocupa mucho espacio"),
+        ))
+        section("Live, QuickTake y time-lapse", CameraSettings.LIVE, listOf(
+            Seg("720", "Ligera", "960 × 720 · más fluido"),
+            Seg("960", "Normal", "1280 × 960 · recomendada"),
+            Seg("1440", "Alta", "1920 × 1440 · más nítido, más pesado"),
+        ))
+        section("Video con efectos", CameraSettings.EFFECTS, listOf(
+            Seg("720", "Fluido", "960 × 720 · recomendado"),
+            Seg("960", "Alta", "1280 × 960 · puede ir más lento"),
+        ))
+
+        root.addView(TextView(this).apply {
+            text = "Listo"
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFF000000.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setBackgroundResource(R.drawable.bg_live_pill)
+            setOnClickListener { dialog.dismiss() }
+        }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(24) })
+
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(root)
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setGravity(android.view.Gravity.BOTTOM)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setWindowAnimations(android.R.style.Animation_InputMethod)
+            setDimAmount(0.45f)
+        }
+        dialog.setOnDismissListener {
+            if (changed) {
+                updateResLabel()
+                bindCamera()
+            }
+        }
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     private fun applyTimerUi() {
@@ -595,18 +705,17 @@ class MainActivity : ComponentActivity() {
         gridButton.setColorFilter(if (gridOn) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
     }
 
+    /** Filtros como miniaturas redondas con la imagen real de la cámara (estilo Instagram). */
     private fun buildFilterChips() {
         filterList.removeAllViews()
-        val pad = dp(14)
         val options: List<Pair<Any, String>> = if (mode == Mode.INSTANT)
             InstantLook.entries.map { it to it.label }
         else PhotoFilter.entries.map { it to it.label }
+        val size = dp(60)
         for ((key, label) in options) {
-            val chip = TextView(this).apply {
-                text = label
-                textSize = 13f
-                setPadding(pad, dp(7), pad, dp(7))
-                setBackgroundResource(R.drawable.bg_filter_chip)
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
                 tag = key
                 setOnClickListener {
                     when (key) {
@@ -623,26 +732,73 @@ class MainActivity : ComponentActivity() {
                     applyPreviewFilter()
                 }
             }
-            val lp = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(8) }
-            filterList.addView(chip, lp)
+            val frame = FrameLayout(this)
+            val img = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundResource(R.drawable.bg_thumb_round)
+                clipToOutline = true
+            }
+            frame.addView(img, FrameLayout.LayoutParams(size, size))
+            val ring = View(this).apply {
+                setBackgroundResource(R.drawable.ring_selected)
+                visibility = View.INVISIBLE
+            }
+            frame.addView(ring, FrameLayout.LayoutParams(size, size))
+            item.addView(frame, LinearLayout.LayoutParams(size, size))
+            item.addView(TextView(this).apply {
+                text = label
+                textSize = 11f
+                setTextColor(0xE6FFFFFF.toInt())
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, dp(5), 0, 0)
+                maxLines = 1
+            })
+            val lp = LinearLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.WRAP_CONTENT)
+            filterList.addView(item, lp)
         }
         applyPreviewFilter()
     }
 
+    /** Pinta cada miniatura con su filtro sobre lo que ve la cámara ahora. */
+    private fun refreshFilterThumbs() {
+        val src = previewView.bitmap ?: return
+        val side = minOf(src.width, src.height)
+        val sq = Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+        val base = Bitmap.createScaledBitmap(sq, 180, 180, true)
+        val keys = (0 until filterList.childCount).map { filterList.getChildAt(it).tag }
+        ioExecutor.execute {
+            val thumbs = keys.map { key ->
+                when (key) {
+                    is InstantLook -> key.apply(base)
+                    is PhotoFilter -> Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888).also {
+                        android.graphics.Canvas(it).drawBitmap(base, 0f, 0f, key.paint())
+                    }
+                    else -> base
+                }
+            }
+            runOnUiThread {
+                for (i in 0 until minOf(filterList.childCount, thumbs.size)) {
+                    val item = filterList.getChildAt(i) as LinearLayout
+                    ((item.getChildAt(0) as FrameLayout).getChildAt(0) as ImageView).setImageBitmap(thumbs[i])
+                }
+            }
+        }
+    }
+
     private fun applyPreviewFilter() {
         val cf = when (mode) {
-            Mode.VIDEO, Mode.TIMELAPSE, Mode.EFFECTS -> null
+            Mode.VIDEO, Mode.TIMELAPSE -> null
+            Mode.EFFECTS -> engine.effect?.filter?.colorFilter()
             Mode.INSTANT -> instantLook.colorFilter()
             else -> filter.colorFilter()
         }
         findTexture(previewView)?.setLayerPaint(cf?.let { Paint().apply { colorFilter = it } })
         val selected: Any = if (mode == Mode.INSTANT) instantLook else filter
         for (i in 0 until filterList.childCount) {
-            val v = filterList.getChildAt(i) as TextView
-            v.isSelected = v.tag == selected
-            v.setTextColor(if (v.isSelected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+            val item = filterList.getChildAt(i) as LinearLayout
+            val on = item.tag == selected
+            (item.getChildAt(0) as FrameLayout).getChildAt(1).visibility = if (on) View.VISIBLE else View.INVISIBLE
+            (item.getChildAt(1) as TextView).setTextColor(if (on) 0xFF00E676.toInt() else 0xE6FFFFFF.toInt())
         }
         val active = if (mode == Mode.INSTANT) instantLook != InstantLook.NONE else filter != PhotoFilter.ORIGINAL
         filterButton.setColorFilter(if (active) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
@@ -1090,6 +1246,8 @@ class MainActivity : ComponentActivity() {
             .setResolutionSelector(CameraSettings.photoSelector(this))
             .build()
         imageCapture = capture
+        val preview = Preview.Builder().setResolutionSelector(ratio43).build()
+            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
         val analysis = ImageAnalysis.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
@@ -1105,6 +1263,7 @@ class MainActivity : ComponentActivity() {
             .also { it.setAnalyzer(effectsExecutor, engine) }
         return UseCaseGroup.Builder()
             .setViewPort(ViewPort.Builder(Rational(3, 4), Surface.ROTATION_0).build())
+            .addUseCase(preview)
             .addUseCase(capture)
             .addUseCase(analysis)
             .build()
