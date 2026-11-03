@@ -192,7 +192,8 @@ object MotionPhotoWriter {
     /** Aplica el filtro a la foto (si es Original devuelve la misma). */
     fun applyFilter(jpeg: ByteArray, filter: PhotoFilter): ByteArray {
         if (filter == PhotoFilter.ORIGINAL) return jpeg
-        val src = decode(jpeg)
+        // Con fotos gigantes (200 MP) se reduce a 5000 px para no quedarse sin memoria
+        val src = decode(jpeg, maxSide = 5000)
         val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
         Canvas(out).drawBitmap(src, 0f, 0f, filter.paint())
         src.recycle()

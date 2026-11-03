@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var filterButton: ImageButton
     private lateinit var gridButton: ImageButton
     private lateinit var timerButton: TextView
+    private lateinit var resButton: TextView
     private lateinit var livePill: TextView
     private lateinit var modeScroll: HorizontalScrollView
     private lateinit var modeList: LinearLayout
@@ -154,6 +155,8 @@ class MainActivity : ComponentActivity() {
         filterButton = findViewById(R.id.filterButton)
         gridButton = findViewById(R.id.gridButton)
         timerButton = findViewById(R.id.timerButton)
+        resButton = findViewById(R.id.resButton)
+        resButton.setOnClickListener { showResolutionMenu() }
         livePill = findViewById(R.id.livePill)
         modeScroll = findViewById(R.id.modeScroll)
         modeList = findViewById(R.id.modeList)
@@ -479,6 +482,7 @@ class MainActivity : ComponentActivity() {
             v.setTextColor(if (v.tag == mode) green else white)
         }
         centerMode()
+        updateResLabel()
         previewView.scaleType = if (mode == Mode.VIDEO) PreviewView.ScaleType.FILL_CENTER
         else PreviewView.ScaleType.FIT_START
         captionPill.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
@@ -536,6 +540,47 @@ class MainActivity : ComponentActivity() {
             maskBottom.visibility = if (show) View.VISIBLE else View.GONE
             gridOverlay.areaHeight = if (mode == Mode.VIDEO) w * 16 / 9 else photoH
         }
+    }
+
+    // ---------- Resolución ----------
+
+    private fun updateResLabel() {
+        resButton.text = when (mode) {
+            Mode.VIDEO -> when (CameraSettings.video(this)) { "uhd" -> "4K"; "hd" -> "720p"; else -> "1080p" }
+            Mode.EFFECTS -> if (CameraSettings.effects(this) == "960") "960p" else "720p"
+            Mode.TIMELAPSE -> CameraSettings.liveSize(this).height.toString() + "p"
+            else -> CameraSettings.label(this)
+        }
+    }
+
+    private fun showResolutionMenu() {
+        if (busy || recording != null) return
+        val sections = listOf(
+            Triple("Foto", CameraSettings.PHOTO, CameraSettings.photoOptions) to CameraSettings.photo(this),
+            Triple("Video (modo VIDEO)", CameraSettings.VIDEO, CameraSettings.videoOptions) to CameraSettings.video(this),
+            Triple("Live, QuickTake y time-lapse", CameraSettings.LIVE, CameraSettings.liveOptions) to CameraSettings.live(this),
+            Triple("Video con efectos", CameraSettings.EFFECTS, CameraSettings.effectsOptions) to CameraSettings.effects(this),
+        )
+        val names = sections.map { (t, cur) -> t.first + "\n   " + (t.third.firstOrNull { it.id == cur }?.label ?: "") }
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Resolución")
+            .setItems(names.toTypedArray()) { _, which ->
+                val (t, cur) = sections[which]
+                val idx = t.third.indexOfFirst { it.id == cur }.coerceAtLeast(0)
+                android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(t.first)
+                    .setSingleChoiceItems(t.third.map { it.label }.toTypedArray(), idx) { d, i ->
+                        CameraSettings.set(this, t.second, t.third[i].id)
+                        d.dismiss()
+                        updateResLabel()
+                        bindCamera()
+                        if (t.second == CameraSettings.PHOTO && t.third[i].id == "max") {
+                            showToast("Las fotos de 200 MP pesan mucho y tardan más en guardarse")
+                        }
+                    }
+                    .show()
+            }
+            .show()
     }
 
     private fun applyTimerUi() {
@@ -970,7 +1015,7 @@ class MainActivity : ComponentActivity() {
         val previewB = Preview.Builder().setResolutionSelector(ratio43)
         val captureB = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setResolutionSelector(ratio43)
+            .setResolutionSelector(CameraSettings.photoSelector(this))
         if (night) {
             // Noche: dejar que la cámara use exposiciones más largas y reducción de ruido fuerte
             val range = nightFpsRange()
@@ -1000,7 +1045,7 @@ class MainActivity : ComponentActivity() {
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
-                        ResolutionStrategy(Size(1280, 960), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                        ResolutionStrategy(CameraSettings.liveSize(this), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
                     )
                     .build()
             )
@@ -1042,7 +1087,7 @@ class MainActivity : ComponentActivity() {
             .build()
         val capture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setResolutionSelector(ratio43)
+            .setResolutionSelector(CameraSettings.photoSelector(this))
             .build()
         imageCapture = capture
         val analysis = ImageAnalysis.Builder()
@@ -1050,7 +1095,7 @@ class MainActivity : ComponentActivity() {
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
-                        ResolutionStrategy(Size(960, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                        ResolutionStrategy(CameraSettings.effectsSize(this), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
                     )
                     .build()
             )
@@ -1076,7 +1121,10 @@ class MainActivity : ComponentActivity() {
             .also { it.setSurfaceProvider(previewView.surfaceProvider) }
         val rec = Recorder.Builder()
             .setQualitySelector(
-                QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.HD))
+                QualitySelector.from(
+                    CameraSettings.videoQuality(this),
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.HD)
+                )
             )
             .build()
         val vc = VideoCapture.withOutput(rec)
