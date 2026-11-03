@@ -16,6 +16,17 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.TextureView
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Toast
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import android.view.ViewGroup
 import android.provider.MediaStore
 import androidx.activity.result.IntentSenderRequest
@@ -82,6 +93,12 @@ class ViewerActivity : ComponentActivity() {
     private var kenBurns: ValueAnimator? = null
     private var barsVisible = true
     private var effectToken = 0
+    private var videoHolder: PageHolder? = null
+    private var album = MediaRepo.ALBUM_ALL
+    private lateinit var favorite: ImageButton
+    private lateinit var keyPanel: View
+    private lateinit var keySeek: SeekBar
+    private lateinit var busyText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,14 +112,20 @@ class ViewerActivity : ComponentActivity() {
         topBar = findViewById(R.id.topBar)
         bottomBar = findViewById(R.id.bottomBar)
 
+        favorite = findViewById(R.id.favorite)
+        keyPanel = findViewById(R.id.keyPanel)
+        keySeek = findViewById(R.id.keySeek)
+        busyText = findViewById(R.id.busyText)
+        album = intent.getStringExtra(EXTRA_ALBUM) ?: MediaRepo.ALBUM_ALL
+
         player = ExoPlayer.Builder(this).build()
         player.addListener(object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                playing?.playerView?.animate()?.alpha(1f)?.setDuration(90)?.start()
+                (playing ?: videoHolder)?.playerView?.animate()?.alpha(1f)?.setDuration(90)?.start()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) stopPlayback()
+                if (state == Player.STATE_ENDED && playing != null) stopPlayback()
             }
         })
 
@@ -110,6 +133,10 @@ class ViewerActivity : ComponentActivity() {
         findViewById<ImageButton>(R.id.share).setOnClickListener { shareCurrent() }
         findViewById<ImageButton>(R.id.delete).setOnClickListener { deleteCurrent() }
         fxChip.setOnClickListener { showFxMenu() }
+        favorite.setOnClickListener { toggleFavorite() }
+        findViewById<ImageButton>(R.id.moreButton).setOnClickListener { showMoreMenu(it) }
+        findViewById<TextView>(R.id.keyCancel).setOnClickListener { closeKeyPanel(apply = false) }
+        findViewById<TextView>(R.id.keyApply).setOnClickListener { closeKeyPanel(apply = true) }
 
         pager.adapter = PageAdapter()
         pager.offscreenPageLimit = 1
@@ -152,7 +179,7 @@ class ViewerActivity : ComponentActivity() {
 
     private fun reload() {
         io.execute {
-            val list = MediaRepo.list(this)
+            val list = MediaRepo.filter(MediaRepo.list(this), album, MediaRepo.favorites(this))
             runOnUiThread {
                 items.clear()
                 items.addAll(list)
@@ -194,6 +221,8 @@ class ViewerActivity : ComponentActivity() {
             else -> SimpleDateFormat("d 'de' MMMM yyyy", Locale("es")).format(date)
         }
         subtitle.text = SimpleDateFormat("h:mm a", Locale("es")).format(date)
+        updateFavoriteIcon()
+        if (keyPanel.visibility == View.VISIBLE) closeKeyPanel(apply = false)
         applyEffect()
     }
 
@@ -203,6 +232,12 @@ class ViewerActivity : ComponentActivity() {
     private fun clearEffect() {
         effectToken++
         stopPlayback()
+        videoHolder?.let { h ->
+            player.stop()
+            h.playerView.alpha = 0f
+            h.playerView.player = null
+        }
+        videoHolder = null
         activeHolder?.let { h ->
             h.animator.stop()
             h.frames.visibility = View.GONE
@@ -226,6 +261,17 @@ class ViewerActivity : ComponentActivity() {
             return
         }
         activeHolder = holder
+        if (item.isVideo) {
+            fxChip.visibility = View.GONE
+            hint.text = ""
+            videoHolder = holder
+            holder.playerView.player = player
+            player.repeatMode = Player.REPEAT_MODE_ONE
+            player.setMediaItem(MediaItem.fromUri(item.uri))
+            player.prepare()
+            player.play()
+            return
+        }
         val fx = fxOf(item)
         updateChip(item, fx)
         holder.frames.colorFilter = null
@@ -318,7 +364,7 @@ class ViewerActivity : ComponentActivity() {
         frames?.takeIf { framesId == item.id }?.let { onReady(it); return }
         io.execute {
             val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
-            val f = file?.let { Frames.load(it) }
+            val f = file?.let { Frames.load(it, maxSide = 540, maxFrames = 45) }
             runOnUiThread {
                 if (items.getOrNull(current)?.id == item.id && f != null) {
                     activeHolder?.animator?.stop()
@@ -371,6 +417,7 @@ class ViewerActivity : ComponentActivity() {
         setBars(false)
 
         holder.playerView.player = player
+        player.repeatMode = Player.REPEAT_MODE_OFF
         player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
         player.prepare()
         player.play()
@@ -462,8 +509,264 @@ class ViewerActivity : ComponentActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    // ---------- Favoritos ----------
+
+    private fun updateFavoriteIcon() {
+        val item = items.getOrNull(current) ?: return
+        val fav = item.id.toString() in MediaRepo.favorites(this)
+        favorite.setImageResource(if (fav) R.drawable.ic_heart_filled else R.drawable.ic_heart)
+    }
+
+    private fun toggleFavorite() {
+        val item = items.getOrNull(current) ?: return
+        val fav = item.id.toString() !in MediaRepo.favorites(this)
+        MediaRepo.setFavorite(this, item.id, fav)
+        favorite.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        updateFavoriteIcon()
+        favorite.scaleX = 0.6f
+        favorite.scaleY = 0.6f
+        favorite.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
+    }
+
+    // ---------- Más opciones ----------
+
+    private fun showMoreMenu(anchor: View) {
+        val item = items.getOrNull(current) ?: return
+        val menu = PopupMenu(this, anchor)
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (!item.isVideo) {
+            actions += "Texto en vivo" to { runOcr(item) }
+            actions += "Recortar sujeto" to { runSegmentation(item) }
+        }
+        if (item.isLive) {
+            actions += "Elegir portada" to { openKeyPanel(item) }
+            actions += "Exportar como video" to { exportVideo(item) }
+            actions += "Exportar como GIF" to { exportGif(item) }
+        }
+        actions.forEachIndexed { i, a -> menu.menu.add(Menu.NONE, i, i, a.first) }
+        menu.setOnMenuItemClickListener { actions[it.itemId].second(); true }
+        menu.show()
+    }
+
+    private fun showBusy(text: String?) {
+        busyText.text = text
+        busyText.visibility = if (text == null) View.GONE else View.VISIBLE
+    }
+
+    private fun say(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+
+    // Texto en vivo (ML Kit, en el cel)
+    private fun runOcr(item: MediaRepo.Item) {
+        val image = try {
+            InputImage.fromFilePath(this, item.uri)
+        } catch (e: Exception) {
+            say("No se pudo abrir la foto"); return
+        }
+        showBusy("Buscando texto…")
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).process(image)
+            .addOnSuccessListener { result ->
+                showBusy(null)
+                if (result.text.isBlank()) say("No encontré texto en esta foto")
+                else showTextDialog(result.text)
+            }
+            .addOnFailureListener { e ->
+                showBusy(null)
+                say("Texto en vivo no disponible todavía (${e.message}). Intenta en un rato.")
+            }
+    }
+
+    private fun showTextDialog(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            setTextIsSelectable(true)
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(dp(22), dp(12), dp(22), dp(12))
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Texto en la foto")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Copiar todo") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("Texto", text))
+                say("Texto copiado")
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    // Recortar sujeto (ML Kit Subject Segmentation)
+    private fun runSegmentation(item: MediaRepo.Item) {
+        showBusy("Recortando sujeto…")
+        io.execute {
+            val bmp = MediaRepo.loadFull(this, item.uri, 1600, software = true)
+            runOnUiThread {
+                if (bmp == null) {
+                    showBusy(null); say("No se pudo abrir la foto"); return@runOnUiThread
+                }
+                val options = SubjectSegmenterOptions.Builder().enableForegroundBitmap().build()
+                SubjectSegmentation.getClient(options).process(InputImage.fromBitmap(bmp, 0))
+                    .addOnSuccessListener { r ->
+                        showBusy(null)
+                        val fg = r.foregroundBitmap
+                        if (fg == null) say("No encontré un sujeto claro") else showCutout(fg)
+                    }
+                    .addOnFailureListener { e ->
+                        showBusy(null)
+                        say("Recorte no disponible todavía (${e.message}). Se está descargando; intenta en un rato.")
+                    }
+            }
+        }
+    }
+
+    private fun showCutout(bmp: Bitmap) {
+        val iv = ImageView(this).apply {
+            setImageBitmap(bmp)
+            adjustViewBounds = true
+            setBackgroundColor(0xFF3A3A3A.toInt())
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Sujeto recortado")
+            .setView(iv)
+            .setPositiveButton("Compartir") { _, _ ->
+                io.execute {
+                    val uri = Exporter.savePng(this, bmp, "RECORTE")
+                    runOnUiThread {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/png"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(Intent.createChooser(send, "Compartir recorte"))
+                    }
+                }
+            }
+            .setNegativeButton("Guardar") { _, _ ->
+                io.execute {
+                    Exporter.savePng(this, bmp, "RECORTE")
+                    runOnUiThread { say("Recorte guardado en la galería") }
+                }
+            }
+            .setNeutralButton("Cerrar", null)
+            .show()
+    }
+
+    // Exportar
+    private fun exportVideo(item: MediaRepo.Item) {
+        val fx = fxOf(item)
+        showBusy("Exportando video…")
+        io.execute {
+            val msg = try {
+                val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
+                    ?: throw IllegalStateException("sin video")
+                if (fx == Fx.LOOP || fx == Fx.BOUNCE) {
+                    val f = Frames.load(file, maxSide = 960, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
+                    val out = File(cacheDir, "export.mp4")
+                    Exporter.framesToMp4(f, fx == Fx.BOUNCE, MotionPhotoWriter.readFilter(this, item.uri), out)
+                    f.recycle()
+                    Exporter.saveVideoFile(this, out, "_" + fx.name)
+                    out.delete()
+                } else {
+                    Exporter.saveVideoFile(this, file, "_LIVE")
+                }
+                "Video guardado en la galería"
+            } catch (e: Throwable) {
+                "No se pudo exportar: ${e.message}"
+            }
+            runOnUiThread { showBusy(null); say(msg) }
+        }
+    }
+
+    private fun exportGif(item: MediaRepo.Item) {
+        val bounce = fxOf(item) == Fx.BOUNCE
+        showBusy("Creando GIF…")
+        io.execute {
+            val msg = try {
+                val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
+                    ?: throw IllegalStateException("sin video")
+                val f = Frames.load(file, maxSide = 480, maxFrames = 60) ?: throw IllegalStateException("sin fotogramas")
+                val out = File(cacheDir, "export.gif")
+                Exporter.framesToGif(f, bounce, MotionPhotoWriter.readFilter(this, item.uri), out)
+                f.recycle()
+                Exporter.saveGif(this, out)
+                out.delete()
+                "GIF guardado en la galería"
+            } catch (e: Throwable) {
+                "No se pudo crear el GIF: ${e.message}"
+            }
+            runOnUiThread { showBusy(null); say(msg) }
+        }
+    }
+
+    // Elegir portada
+    private var keyItem: MediaRepo.Item? = null
+
+    private fun openKeyPanel(item: MediaRepo.Item) {
+        val holder = holderAt(current) ?: return
+        clearEffect()
+        activeHolder = holder
+        keyItem = item
+        showBusy("Cargando…")
+        withFrames(item) { f ->
+            showBusy(null)
+            if (f == null) {
+                say("No se pudo cargar el movimiento"); return@withFrames
+            }
+            keyPanel.visibility = View.VISIBLE
+            bottomBar.visibility = View.INVISIBLE
+            pager.isUserInputEnabled = false
+            holder.frames.visibility = View.VISIBLE
+            holder.frames.alpha = 1f
+            keySeek.max = f.bitmaps.size - 1
+            keySeek.progress = f.bitmaps.size / 2
+            holder.frames.setImageBitmap(f.bitmaps[keySeek.progress])
+            keySeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    frames?.bitmaps?.getOrNull(p)?.let { holder.frames.setImageBitmap(it) }
+                    if (fromUser && p % 3 == 0) sb.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+    }
+
+    private fun closeKeyPanel(apply: Boolean) {
+        keyPanel.visibility = View.GONE
+        bottomBar.visibility = View.VISIBLE
+        pager.isUserInputEnabled = true
+        val item = keyItem ?: return
+        keyItem = null
+        val f = frames
+        if (!apply || f == null) {
+            applyEffect(); return
+        }
+        val timeUs = (keySeek.progress / f.fps * 1_000_000).toLong()
+        showBusy("Guardando portada…")
+        io.execute {
+            val ok = try {
+                MotionPhotoWriter.replaceKeyPhoto(this, item.uri, timeUs)
+            } catch (_: Exception) {
+                false
+            }
+            val bmp = if (ok) MediaRepo.loadFull(this, item.uri, 2400) else null
+            runOnUiThread {
+                showBusy(null)
+                if (ok) {
+                    holderAt(current)?.photo?.setImageBitmap(bmp)
+                    say("Portada actualizada")
+                } else {
+                    say("Solo se puede cambiar la portada de fotos tomadas con Camaratrix")
+                }
+                applyEffect()
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_ID = "id"
+        const val EXTRA_ALBUM = "album"
     }
 
     // ---------- Páginas ----------
@@ -536,7 +839,8 @@ class ViewerActivity : ComponentActivity() {
             holder.playerView.alpha = 0f
             val maxSide = maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) * 3 / 2
             io.execute {
-                val bmp: Bitmap? = MediaRepo.loadFull(this@ViewerActivity, item.uri, maxSide)
+                val bmp: Bitmap? = if (item.isVideo) MediaRepo.thumbnail(this@ViewerActivity, item.uri, 1080)
+                else MediaRepo.loadFull(this@ViewerActivity, item.uri, maxSide)
                 if (item.isLive) MotionPhotoWriter.extractVideo(this@ViewerActivity, item.uri, videoFile(item))
                 runOnUiThread {
                     if (holder.boundId == item.id) holder.photo.setImageBitmap(bmp)

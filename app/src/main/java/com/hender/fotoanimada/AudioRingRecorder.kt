@@ -15,7 +15,12 @@ import android.util.Log
  * Los tiempos usan System.nanoTime(), el mismo reloj que MotionRecorder,
  * para que audio y video queden sincronizados.
  */
-class AudioRingRecorder(private val keepUs: Long = 6_000_000) {
+class AudioRingRecorder {
+
+    /** Cuánto audio guardar. Se sube mientras se graba un video largo. */
+    @Volatile
+    var keepUs: Long = 6_000_000
+
 
     private val lock = Any()
     private val samples = ArrayDeque<MotionRecorder.Sample>()

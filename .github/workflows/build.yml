@@ -25,15 +25,15 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk Camaratrix-v0.4.${{ github.run_number }}.apk
+          cp app/build/outputs/apk/debug/app-debug.apk Camaratrix-v0.45.${{ github.run_number }}.apk
 
       - name: Publicar en Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Camaratrix v0.4.${{ github.run_number }}
+          name: Camaratrix v0.45.${{ github.run_number }}
           body: |
             Compilación automática de `${{ github.sha }}`.
             Descarga el APK de abajo e instálalo en el celular.
-          files: Camaratrix-v0.4.${{ github.run_number }}.apk
+          files: Camaratrix-v0.45.${{ github.run_number }}.apk
           make_latest: true

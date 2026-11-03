@@ -53,6 +53,20 @@ class MotionRecorder(
     private val buffer = ArrayDeque<Sample>()
     private val pending = AtomicReference<((Clip?) -> Unit)?>(null)
     private var activeRequest: ((Clip?) -> Unit)? = null
+
+    // Grabación larga (QuickTake)
+    private val longStartReq = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val longStopReq = AtomicReference<((Clip?) -> Unit)?>(null)
+    private var longActive = false
+    private var longStartPts = 0L
+
+    /** Empieza a grabar sin recortar el buffer (mantener el obturador). */
+    fun startLong() = longStartReq.set(true)
+
+    /** Termina la grabación larga y entrega el clip completo. */
+    fun stopLong(onReady: (Clip?) -> Unit) {
+        longStopReq.getAndSet(onReady)?.invoke(null)
+    }
     private var shutterPtsUs = -1L
 
     /** Pide un clip. El callback llega en el hilo del analizador. */
@@ -62,7 +76,7 @@ class MotionRecorder(
 
     override fun analyze(image: ImageProxy) {
         try {
-            if (!enabled) {
+            if (!enabled && !longActive && !longStartReq.get()) {
                 if (buffer.isNotEmpty()) buffer.clear()
                 pending.getAndSet(null)?.invoke(null)
                 activeRequest?.invoke(null)
@@ -121,7 +135,7 @@ class MotionRecorder(
                 MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
             )
-            setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, 10_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, 30)
             // Un keyframe por segundo para poder cortar el buffer limpio
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
@@ -150,7 +164,7 @@ class MotionRecorder(
                         val bytes = ByteArray(info.size)
                         buf.get(bytes)
                         buffer.addLast(Sample(bytes, info.presentationTimeUs, info.flags))
-                        if (activeRequest == null) trim()
+                        if (activeRequest == null && !longActive) trim()
                     }
                     enc.releaseOutputBuffer(o, false)
                 }
@@ -178,6 +192,29 @@ class MotionRecorder(
     }
 
     private fun handleRequests() {
+        if (longStartReq.getAndSet(false)) {
+            longActive = true
+            longStartPts = buffer.lastOrNull()?.ptsUs ?: (System.nanoTime() / 1000)
+        }
+        longStopReq.getAndSet(null)?.let { cb ->
+            if (!longActive) {
+                cb(null)
+            } else {
+                longActive = false
+                val fmt = outFormat
+                val list = buffer.toList()
+                var startIdx = list.indexOfLast { it.isKey && it.ptsUs <= longStartPts }
+                if (startIdx < 0) startIdx = list.indexOfFirst { it.isKey }
+                val samples = if (startIdx >= 0) list.subList(startIdx, list.size).toList() else emptyList()
+                if (activeRequest == null) trim()
+                if (fmt == null || samples.isEmpty()) {
+                    cb(null)
+                } else {
+                    val a = audio?.snapshot(samples.first().ptsUs, samples.last().ptsUs)
+                    cb(Clip(fmt, samples, samples.first().ptsUs, rotation, a))
+                }
+            }
+        }
         pending.getAndSet(null)?.let { req ->
             if (activeRequest != null) {
                 req(null)
@@ -193,7 +230,7 @@ class MotionRecorder(
             val fmt = outFormat
             val samples = buffer.toList()
             activeRequest = null
-            trim()
+            if (!longActive) trim()
             if (fmt == null || samples.isEmpty()) {
                 req(null)
             } else {

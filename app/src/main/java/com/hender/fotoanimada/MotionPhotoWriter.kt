@@ -242,4 +242,42 @@ object MotionPhotoWriter {
     }
 
     fun encodeInstant(bmp: Bitmap): ByteArray = encode(bmp, 93)
+
+    /**
+     * Cambia la portada de una foto animada por el fotograma en timeUs del clip.
+     * Solo funciona con fotos de la app (Android no deja reescribir las de otras apps).
+     */
+    fun replaceKeyPhoto(context: Context, uri: Uri, timeUs: Long): Boolean {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
+        val head = String(bytes, 0, minOf(bytes.size, 128 * 1024), Charsets.ISO_8859_1)
+        val len = (offsetRegex.find(head) ?: lengthRegex.find(head))
+            ?.groupValues?.get(1)?.toIntOrNull() ?: return false
+        if (len <= 0 || len >= bytes.size) return false
+        val video = bytes.copyOfRange(bytes.size - len, bytes.size)
+        val filter = PhotoFilter.fromId(filterRegex.find(head)?.groupValues?.get(1))
+
+        val tmp = File(context.cacheDir, "key.mp4")
+        tmp.writeBytes(video)
+        val mmr = android.media.MediaMetadataRetriever()
+        val frame = try {
+            mmr.setDataSource(tmp.path)
+            mmr.getFrameAtTime(timeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST)
+        } finally {
+            mmr.release()
+            tmp.delete()
+        } ?: return false
+
+        val out = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(frame, 0f, 0f, filter.paint())
+        frame.recycle()
+        val jpeg = encode(out, 95)
+        out.recycle()
+        val xmp = buildXmp(video.size, timeUs, filter)
+        val newBytes = insertXmp(jpeg, xmp)
+        context.contentResolver.openOutputStream(uri, "wt")!!.use {
+            it.write(newBytes)
+            it.write(video)
+        }
+        return true
+    }
 }
