@@ -30,7 +30,16 @@ class MotionRecorder(
         val samples: List<Sample>,
         val keyPtsUs: Long,
         val rotation: Int,
+        val audio: AudioRingRecorder.Snapshot?,
     )
+
+    /** Si es false no se graba nada (modo foto normal, ahorra batería). */
+    @Volatile
+    var enabled = true
+
+    /** Fuente de audio opcional. */
+    @Volatile
+    var audio: AudioRingRecorder? = null
 
     private var codec: MediaCodec? = null
     private var outFormat: MediaFormat? = null
@@ -51,9 +60,17 @@ class MotionRecorder(
 
     override fun analyze(image: ImageProxy) {
         try {
+            if (!enabled) {
+                if (buffer.isNotEmpty()) buffer.clear()
+                pending.getAndSet(null)?.invoke(null)
+                activeRequest?.invoke(null)
+                activeRequest = null
+                return
+            }
             rotation = image.imageInfo.rotationDegrees
             val enc = ensureEncoder(image.width, image.height)
-            val ptsUs = image.imageInfo.timestamp / 1000
+            // Mismo reloj que el audio (System.nanoTime)
+            val ptsUs = System.nanoTime() / 1000
 
             val idx = enc.dequeueInputBuffer(10_000)
             if (idx >= 0) {
@@ -168,7 +185,12 @@ class MotionRecorder(
             val samples = buffer.toList()
             activeRequest = null
             trim()
-            req(if (fmt != null && samples.isNotEmpty()) Clip(fmt, samples, shutterPtsUs, rotation) else null)
+            if (fmt == null || samples.isEmpty()) {
+                req(null)
+            } else {
+                val a = audio?.snapshot(samples.first().ptsUs, samples.last().ptsUs)
+                req(Clip(fmt, samples, shutterPtsUs, rotation, a))
+            }
         }
     }
 

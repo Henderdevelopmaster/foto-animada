@@ -31,11 +31,17 @@ object MotionPhotoWriter {
         file.delete()
         val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         muxer.setOrientationHint(clip.rotation)
-        val track = muxer.addTrack(clip.format)
+        val videoTrack = muxer.addTrack(clip.format)
+        val audioTrack = clip.audio?.let { muxer.addTrack(it.format) } ?: -1
         muxer.start()
+
+        // Intercalar video y audio en orden de tiempo
+        val end = samples.last().ptsUs
+        val audioSamples = clip.audio?.samples?.filter { it.ptsUs in base..end } ?: emptyList()
+        val all = samples.map { videoTrack to it } + audioSamples.map { audioTrack to it }
         val info = MediaCodec.BufferInfo()
-        for (s in samples) {
-            val flags = if (s.isKey) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+        for ((track, s) in all.sortedBy { it.second.ptsUs }) {
+            val flags = if (track == videoTrack && s.isKey) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
             info.set(0, s.data.size, s.ptsUs - base, flags)
             muxer.writeSampleData(track, ByteBuffer.wrap(s.data), info)
         }
@@ -121,5 +127,20 @@ object MotionPhotoWriter {
         values.put(MediaStore.Images.Media.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
         return uri
+    }
+
+    private val offsetRegex = Regex("""GCamera:MicroVideoOffset="(\d+)"""")
+    private val lengthRegex = Regex("""Item:Semantic="MotionPhoto"[^>]*?Item:Length="(\d+)"""")
+
+    /** Saca el MP4 de una foto animada. Devuelve null si es una foto normal. */
+    fun extractVideo(context: Context, uri: Uri, out: File): File? {
+        if (out.exists() && out.length() > 0) return out
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val head = String(bytes, 0, minOf(bytes.size, 128 * 1024), Charsets.ISO_8859_1)
+        val len = (offsetRegex.find(head) ?: lengthRegex.find(head))
+            ?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        if (len <= 0 || len >= bytes.size) return null
+        out.writeBytes(bytes.copyOfRange(bytes.size - len, bytes.size))
+        return out
     }
 }
