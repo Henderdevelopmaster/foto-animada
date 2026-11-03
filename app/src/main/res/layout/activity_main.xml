@@ -10,7 +10,17 @@
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="64dp"
-        android:layout_marginTop="24dp">
+        android:layout_marginTop="24dp"
+        android:paddingHorizontal="16dp">
+
+        <ImageButton
+            android:id="@+id/filterButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Filtros"
+            android:src="@drawable/ic_filters" />
 
         <ImageButton
             android:id="@+id/liveToggle"
@@ -22,7 +32,7 @@
             android:src="@drawable/ic_live_on" />
     </FrameLayout>
 
-    <!-- Visor 4:3 -->
+    <!-- Visor -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -33,6 +43,23 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             app:scaleType="fitStart" />
+
+        <!-- Guías del modo instantánea (cuadrado) -->
+        <View
+            android:id="@+id/instantMaskTop"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_gravity="top"
+            android:background="#B3000000"
+            android:visibility="gone" />
+
+        <View
+            android:id="@+id/instantMaskBottom"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_gravity="top"
+            android:background="#B3000000"
+            android:visibility="gone" />
 
         <View
             android:id="@+id/flash"
@@ -61,13 +88,48 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="64dp"
             android:alpha="0"
             android:background="@drawable/bg_badge"
             android:paddingHorizontal="12dp"
             android:paddingVertical="6dp"
             android:textColor="#FFFFFF"
             android:textSize="13sp" />
+
+        <HorizontalScrollView
+            android:id="@+id/filterBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="12dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/filterList"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp" />
+        </HorizontalScrollView>
+
+        <!-- Revelado de la instantánea -->
+        <FrameLayout
+            android:id="@+id/developOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#CC000000"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/developImage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_margin="36dp"
+                android:adjustViewBounds="true"
+                android:elevation="8dp"
+                android:scaleType="fitCenter" />
+        </FrameLayout>
     </FrameLayout>
 
     <!-- Panel inferior -->
@@ -78,16 +140,33 @@
         android:paddingBottom="36dp"
         android:paddingTop="14dp">
 
-        <TextView
-            android:id="@+id/modeLabel"
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginBottom="18dp"
-            android:text="FOTO"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/modePhoto"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="4dp"
+                android:text="FOTO"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/modeInstant"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="4dp"
+                android:text="INSTANTÁNEA"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <FrameLayout
             android:layout_width="match_parent"

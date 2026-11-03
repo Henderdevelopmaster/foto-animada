@@ -15,7 +15,11 @@ import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.TextureView
 import android.view.ViewGroup
+import android.provider.MediaStore
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -120,6 +124,33 @@ class ViewerActivity : ComponentActivity() {
             strip.setPadding(pad, 0, pad, 0)
         }
 
+        findViewById<ImageButton>(R.id.gridButton).setOnClickListener {
+            startActivity(Intent(this, GalleryActivity::class.java))
+            finish()
+        }
+
+        startId = intent.getLongExtra(EXTRA_ID, -1L)
+        if (!GalleryAccess.has(this) && !GalleryAccess.askedBefore(this)) {
+            GalleryAccess.markAsked(this)
+            readPermission.launch(GalleryAccess.permissions())
+        } else {
+            reload()
+        }
+    }
+
+    private var startId = -1L
+
+    private val readPermission =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { reload() }
+
+    private val deleteRequest =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+            if (res.resultCode == RESULT_OK) pendingDelete?.let { removeItem(it) }
+            pendingDelete = null
+        }
+    private var pendingDelete: MediaRepo.Item? = null
+
+    private fun reload() {
         io.execute {
             val list = MediaRepo.list(this)
             runOnUiThread {
@@ -131,6 +162,8 @@ class ViewerActivity : ComponentActivity() {
                     hint.text = "Todavía no hay fotos"
                     fxChip.visibility = View.GONE
                 } else {
+                    val start = items.indexOfFirst { it.id == startId }.coerceAtLeast(0)
+                    pager.setCurrentItem(start, false)
                     pager.post { onSelected(pager.currentItem) }
                 }
             }
@@ -195,6 +228,20 @@ class ViewerActivity : ComponentActivity() {
         activeHolder = holder
         val fx = fxOf(item)
         updateChip(item, fx)
+        holder.frames.colorFilter = null
+        (holder.playerView.videoSurfaceView as? TextureView)?.setLayerPaint(null)
+        if (item.isLive) {
+            val token = effectToken
+            io.execute {
+                val f = MotionPhotoWriter.readFilter(this, item.uri)
+                if (f == PhotoFilter.ORIGINAL) return@execute
+                runOnUiThread {
+                    if (token != effectToken) return@runOnUiThread
+                    holder.frames.colorFilter = f.colorFilter()
+                    (holder.playerView.videoSurfaceView as? TextureView)?.setLayerPaint(f.paint())
+                }
+            }
+        }
 
         when (fx) {
             Fx.LIVE -> hint.text = "Mantén presionado para ver el movimiento"
@@ -370,15 +417,30 @@ class ViewerActivity : ComponentActivity() {
         clearEffect()
         try {
             contentResolver.delete(item.uri, null, null)
-            videoFile(item).delete()
-            prefs.edit().remove("fx_${item.id}").apply()
-            items.removeAt(pos)
-            pager.adapter?.notifyItemRemoved(pos)
-            strip.adapter?.notifyItemRemoved(pos)
-            if (items.isEmpty()) finish() else pager.post { onSelected(pager.currentItem) }
+            removeItem(item)
+        } catch (e: SecurityException) {
+            // Foto de otra app: Android pide confirmación al usuario
+            try {
+                val sender = MediaStore.createDeleteRequest(contentResolver, listOf(item.uri)).intentSender
+                pendingDelete = item
+                deleteRequest.launch(IntentSenderRequest.Builder(sender).build())
+            } catch (_: Exception) {
+                hint.text = "No se pudo eliminar"
+            }
         } catch (e: Exception) {
             hint.text = "No se pudo eliminar"
         }
+    }
+
+    private fun removeItem(item: MediaRepo.Item) {
+        val pos = items.indexOfFirst { it.id == item.id }
+        if (pos < 0) return
+        videoFile(item).delete()
+        prefs.edit().remove("fx_${item.id}").apply()
+        items.removeAt(pos)
+        pager.adapter?.notifyItemRemoved(pos)
+        strip.adapter?.notifyItemRemoved(pos)
+        if (items.isEmpty()) finish() else pager.post { onSelected(pager.currentItem) }
     }
 
     override fun onPause() {
@@ -399,6 +461,10 @@ class ViewerActivity : ComponentActivity() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    companion object {
+        const val EXTRA_ID = "id"
+    }
 
     // ---------- Páginas ----------
 

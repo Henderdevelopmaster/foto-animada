@@ -1,6 +1,14 @@
 package com.hender.fotoanimada
 
 import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ImageDecoder
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
+import java.io.ByteArrayOutputStream
 import android.content.Context
 import android.media.MediaCodec
 import android.media.MediaMuxer
@@ -18,6 +26,9 @@ import java.util.Locale
  * Google Fotos lo reconoce y lo reproduce como foto animada.
  */
 object MotionPhotoWriter {
+
+    const val FOLDER = "DCIM/Camaratrix"
+
 
     class Mp4(val bytes: ByteArray, val presentationUs: Long)
 
@@ -53,13 +64,15 @@ object MotionPhotoWriter {
         return Mp4(bytes, (clip.keyPtsUs - base).coerceAtLeast(0))
     }
 
-    fun buildXmp(videoLength: Int, presentationUs: Long): String = """
+    fun buildXmp(videoLength: Int, presentationUs: Long, filter: PhotoFilter = PhotoFilter.ORIGINAL): String = """
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="FotoAnimada">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""
     xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"
     xmlns:Container="http://ns.google.com/photos/1.0/container/"
     xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
+    xmlns:Camaratrix="https://github.com/Henderdevelopmaster/camaratrix/ns/1.0/"
+    Camaratrix:Filter="${filter.id}"
     GCamera:MotionPhoto="1"
     GCamera:MotionPhotoVersion="1"
     GCamera:MotionPhotoPresentationTimestampUs="$presentationUs"
@@ -107,14 +120,14 @@ object MotionPhotoWriter {
     }
 
     /** Guarda en DCIM/FotoAnimada. Si mp4 es null guarda solo la foto. */
-    fun save(context: Context, jpeg: ByteArray, mp4: ByteArray?): Uri {
+    fun save(context: Context, jpeg: ByteArray, mp4: ByteArray?, suffix: String = ""): Uri {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val name = if (mp4 != null) "MVIMG_$stamp.jpg" else "IMG_$stamp.jpg"
+        val name = if (mp4 != null) "MVIMG_$stamp$suffix.jpg" else "IMG_$stamp$suffix.jpg"
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/FotoAnimada")
+            put(MediaStore.Images.Media.RELATIVE_PATH, FOLDER)
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
@@ -143,4 +156,90 @@ object MotionPhotoWriter {
         out.writeBytes(bytes.copyOfRange(bytes.size - len, bytes.size))
         return out
     }
+
+    private val filterRegex = Regex("""Camaratrix:Filter="([a-z]+)"""")
+
+    /** Filtro guardado en el XMP (para pintar el video con el mismo color que la foto). */
+    fun readFilter(context: Context, uri: Uri): PhotoFilter = try {
+        val head = context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(128 * 1024)
+            val n = input.read(buf)
+            if (n > 0) String(buf, 0, n, Charsets.ISO_8859_1) else ""
+        } ?: ""
+        PhotoFilter.fromId(filterRegex.find(head)?.groupValues?.get(1))
+    } catch (_: Exception) {
+        PhotoFilter.ORIGINAL
+    }
+
+    private fun decode(jpeg: ByteArray, maxSide: Int = 0): Bitmap {
+        val src = ImageDecoder.createSource(ByteBuffer.wrap(jpeg))
+        return ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val longest = maxOf(info.size.width, info.size.height)
+            if (maxSide in 1 until longest) {
+                val k = maxSide.toFloat() / longest
+                decoder.setTargetSize((info.size.width * k).toInt(), (info.size.height * k).toInt())
+            }
+        }
+    }
+
+    private fun encode(bmp: Bitmap, quality: Int = 95): ByteArray {
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        return out.toByteArray()
+    }
+
+    /** Aplica el filtro a la foto (si es Original devuelve la misma). */
+    fun applyFilter(jpeg: ByteArray, filter: PhotoFilter): ByteArray {
+        if (filter == PhotoFilter.ORIGINAL) return jpeg
+        val src = decode(jpeg)
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        Canvas(out).drawBitmap(src, 0f, 0f, filter.paint())
+        src.recycle()
+        val bytes = encode(out)
+        out.recycle()
+        return bytes
+    }
+
+    /** Arma una foto instantánea: recorte cuadrado, marco blanco y fecha abajo. */
+    fun makeInstant(jpeg: ByteArray, filter: PhotoFilter): Bitmap {
+        val src = decode(jpeg, maxSide = 2400)
+        val side = minOf(src.width, src.height)
+        val photoSize = 1600
+        val border = 90
+        val bottom = 380
+        val w = photoSize + border * 2
+        val h = photoSize + border + bottom
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawColor(Color.rgb(250, 249, 245))
+
+        val srcRect = Rect(
+            (src.width - side) / 2, (src.height - side) / 2,
+            (src.width + side) / 2, (src.height + side) / 2
+        )
+        val dst = Rect(border, border, border + photoSize, border + photoSize)
+        c.drawBitmap(src, srcRect, dst, filter.paint())
+        src.recycle()
+
+        // Sombra interior suave sobre la foto
+        val inner = Paint().apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            color = Color.argb(40, 0, 0, 0)
+        }
+        c.drawRect(dst, inner)
+
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(70, 70, 75)
+            textSize = 64f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+            textAlign = Paint.Align.CENTER
+        }
+        val date = SimpleDateFormat("d MMM yyyy", Locale("es")).format(Date())
+        c.drawText(date, w / 2f, border + photoSize + bottom * 0.58f, text)
+        return out
+    }
+
+    fun encodeInstant(bmp: Bitmap): ByteArray = encode(bmp, 93)
 }

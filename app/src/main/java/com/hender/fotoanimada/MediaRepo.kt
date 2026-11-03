@@ -13,7 +13,11 @@ object MediaRepo {
 
     data class Item(val id: Long, val uri: Uri, val isLive: Boolean, val dateMs: Long)
 
-    fun list(context: Context): List<Item> {
+    /**
+     * onlyOwn = true: solo las fotos de la app.
+     * onlyOwn = false: todas las fotos a las que tengamos acceso (galería completa).
+     */
+    fun list(context: Context, onlyOwn: Boolean = false): List<Item> {
         val result = mutableListOf<Item>()
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
@@ -23,8 +27,8 @@ object MediaRepo {
         context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?",
-            arrayOf("DCIM/FotoAnimada%"),
+            if (onlyOwn) "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?" else null,
+            if (onlyOwn) arrayOf("DCIM/Camaratrix%", "DCIM/FotoAnimada%") else null,
             "${MediaStore.Images.Media.DATE_ADDED} DESC, ${MediaStore.Images.Media._ID} DESC"
         )?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
@@ -34,7 +38,8 @@ object MediaRepo {
                 val id = c.getLong(idCol)
                 val name = c.getString(nameCol) ?: ""
                 val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                result += Item(id, uri, name.startsWith("MVIMG_"), c.getLong(dateCol) * 1000)
+                val live = name.startsWith("MVIMG_") || name.contains(".MP.")
+                result += Item(id, uri, live, c.getLong(dateCol) * 1000)
             }
         }
         return result
