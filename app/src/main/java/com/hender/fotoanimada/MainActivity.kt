@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
     private var effects = listOf<FaceEffect>()
     private var effectId = "perrito"
     private var effectRecording = false
+    private var instantLook = InstantLook.NONE
     private lateinit var toast: TextView
     private lateinit var countdown: TextView
     private lateinit var recTimer: TextView
@@ -166,6 +167,7 @@ class MainActivity : ComponentActivity() {
         engine = EffectsEngine(this, effectView)
         engine.audio = audio
         effectId = prefs.getString(KEY_EFFECT, "perrito") ?: "perrito"
+        instantLook = InstantLook.fromId(prefs.getString(KEY_LOOK, null))
         toast = findViewById(R.id.toast)
         countdown = findViewById(R.id.countdown)
         recTimer = findViewById(R.id.recTimer)
@@ -325,8 +327,22 @@ class MainActivity : ComponentActivity() {
             val lp = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
             effectList.addView(tv, lp)
         }
+        val more = TextView(this).apply {
+            text = "＋"
+            textSize = 24f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFF00E676.toInt())
+            setBackgroundResource(R.drawable.bg_effect)
+            setOnClickListener {
+                libraryLauncher.launch(Intent(this@MainActivity, EffectsLibraryActivity::class.java))
+            }
+        }
+        effectList.addView(more, LinearLayout.LayoutParams(size, size))
         selectEffect(effectId, false)
     }
+
+    private val libraryLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { buildEffects() }
 
     private fun selectEffect(id: String, user: Boolean) {
         val fx = effects.firstOrNull { it.id == id } ?: effects.firstOrNull() ?: return
@@ -490,6 +506,10 @@ class MainActivity : ComponentActivity() {
         liveToggle.visibility = if (mode == Mode.PHOTO) View.VISIBLE else View.INVISIBLE
         liveToggle.setImageResource(if (liveOn) R.drawable.ic_live_on else R.drawable.ic_live_off)
         val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE || mode == Mode.EFFECTS
+        if (filterList.childCount > 0) {
+            val wantInstant = mode == Mode.INSTANT
+            if ((filterList.getChildAt(0).tag is InstantLook) != wantInstant) buildFilterChips()
+        }
         filterButton.visibility = if (noFilter) View.INVISIBLE else View.VISIBLE
         if (noFilter) filterBar.visibility = View.GONE
         shutter.setBackgroundResource(
@@ -533,14 +553,30 @@ class MainActivity : ComponentActivity() {
     private fun buildFilterChips() {
         filterList.removeAllViews()
         val pad = dp(14)
-        for (f in PhotoFilter.entries) {
+        val options: List<Pair<Any, String>> = if (mode == Mode.INSTANT)
+            InstantLook.entries.map { it to it.label }
+        else PhotoFilter.entries.map { it to it.label }
+        for ((key, label) in options) {
             val chip = TextView(this).apply {
-                text = f.label
+                text = label
                 textSize = 13f
                 setPadding(pad, dp(7), pad, dp(7))
                 setBackgroundResource(R.drawable.bg_filter_chip)
-                tag = f
-                setOnClickListener { selectFilter(f) }
+                tag = key
+                setOnClickListener {
+                    when (key) {
+                        is InstantLook -> {
+                            instantLook = key
+                            prefs.edit().putString(KEY_LOOK, key.id).apply()
+                        }
+                        is PhotoFilter -> {
+                            filter = key
+                            prefs.edit().putString(KEY_FILTER, key.id).apply()
+                        }
+                    }
+                    tap(filterButton)
+                    applyPreviewFilter()
+                }
             }
             val lp = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -550,24 +586,21 @@ class MainActivity : ComponentActivity() {
         applyPreviewFilter()
     }
 
-    private fun selectFilter(f: PhotoFilter) {
-        filter = f
-        prefs.edit().putString(KEY_FILTER, f.id).apply()
-        tap(filterButton)
-        applyPreviewFilter()
-    }
-
     private fun applyPreviewFilter() {
-        val active = if (mode == Mode.VIDEO || mode == Mode.TIMELAPSE) PhotoFilter.ORIGINAL else filter
-        findTexture(previewView)?.setLayerPaint(
-            if (active == PhotoFilter.ORIGINAL) null else Paint().apply { colorFilter = active.colorFilter() }
-        )
+        val cf = when (mode) {
+            Mode.VIDEO, Mode.TIMELAPSE, Mode.EFFECTS -> null
+            Mode.INSTANT -> instantLook.colorFilter()
+            else -> filter.colorFilter()
+        }
+        findTexture(previewView)?.setLayerPaint(cf?.let { Paint().apply { colorFilter = it } })
+        val selected: Any = if (mode == Mode.INSTANT) instantLook else filter
         for (i in 0 until filterList.childCount) {
             val v = filterList.getChildAt(i) as TextView
-            v.isSelected = v.tag == filter
+            v.isSelected = v.tag == selected
             v.setTextColor(if (v.isSelected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
         }
-        filterButton.setColorFilter(if (filter == PhotoFilter.ORIGINAL) 0xFFFFFFFF.toInt() else 0xFF00E676.toInt())
+        val active = if (mode == Mode.INSTANT) instantLook != InstantLook.NONE else filter != PhotoFilter.ORIGINAL
+        filterButton.setColorFilter(if (active) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
     }
 
     private fun findTexture(v: View): TextureView? {
@@ -1157,7 +1190,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         try {
-            val bmp = Processing.captioned(photo, caption, f)
+            val bmp = Processing.captioned(photo, caption, instantLook)
             val uri = MotionPhotoWriter.save(this, Processing.encode(bmp, 93), null, "_INSTANT")
             runOnUiThread { showResult(bmp, uri, "image/jpeg") }
             finishSave(null)
@@ -1419,6 +1452,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_GRID = "grid"
         private const val KEY_CAPTION = "caption"
         private const val KEY_EFFECT = "effect"
+        private const val KEY_LOOK = "instant_look"
         private const val MAX_QUICKTAKE_S = 60
     }
 }

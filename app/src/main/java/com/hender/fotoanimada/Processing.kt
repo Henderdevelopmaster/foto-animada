@@ -132,11 +132,10 @@ object Processing {
     }
 
     /** Instantánea tipo IG: foto con el texto encima, en una franja suave. */
-    fun captioned(jpeg: ByteArray, caption: String, filter: PhotoFilter): Bitmap {
+    fun captioned(jpeg: ByteArray, caption: String, look: InstantLook): Bitmap {
         val src = decode(jpeg, 2400)
-        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val out = look.apply(src)
         val c = Canvas(out)
-        c.drawBitmap(src, 0f, 0f, filter.paint())
         src.recycle()
         if (caption.isNotBlank()) drawCaption(c, out.width, out.height, caption)
         return out
