@@ -60,6 +60,12 @@ class MotionRecorder(
     private var longActive = false
     private var longStartPts = 0L
 
+    /** Time-lapse: 1 de cada N cuadros, reproducido a 30 fps. 0 = apagado. */
+    @Volatile
+    var timelapseStep = 0
+    private var frameCounter = 0L
+    private var synthPts = 0L
+
     /** Empieza a grabar sin recortar el buffer (mantener el obturador). */
     fun startLong() = longStartReq.set(true)
 
@@ -93,7 +99,17 @@ class MotionRecorder(
             cropY = (crop.top + (crop.height() - ch) / 2) and 1.inv()
             val enc = ensureEncoder(cw, ch)
             // Mismo reloj que el audio (System.nanoTime)
-            val ptsUs = System.nanoTime() / 1000
+            var ptsUs = System.nanoTime() / 1000
+            val step = timelapseStep
+            if (step > 0 && (longActive || longStartReq.get())) {
+                frameCounter++
+                if (frameCounter % step != 0L) return
+                synthPts = maxOf(synthPts + 33_333, buffer.lastOrNull()?.ptsUs?.plus(33_333) ?: 0L)
+                ptsUs = synthPts
+            } else {
+                // Que el reloj nunca vaya hacia atrás después de un time-lapse
+                ptsUs = maxOf(ptsUs, synthPts + 33_333)
+            }
 
             val idx = enc.dequeueInputBuffer(10_000)
             if (idx >= 0) {
@@ -195,6 +211,14 @@ class MotionRecorder(
         if (longStartReq.getAndSet(false)) {
             longActive = true
             longStartPts = buffer.lastOrNull()?.ptsUs ?: (System.nanoTime() / 1000)
+            if (timelapseStep > 0) {
+                // Arrancar limpio con un keyframe
+                buffer.clear()
+                longStartPts = 0
+                codec?.setParameters(android.os.Bundle().apply {
+                    putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+                })
+            }
         }
         longStopReq.getAndSet(null)?.let { cb ->
             if (!longActive) {
@@ -203,14 +227,15 @@ class MotionRecorder(
                 longActive = false
                 val fmt = outFormat
                 val list = buffer.toList()
-                var startIdx = list.indexOfLast { it.isKey && it.ptsUs <= longStartPts }
+                var startIdx = if (timelapseStep > 0) -1 else list.indexOfLast { it.isKey && it.ptsUs <= longStartPts }
                 if (startIdx < 0) startIdx = list.indexOfFirst { it.isKey }
                 val samples = if (startIdx >= 0) list.subList(startIdx, list.size).toList() else emptyList()
                 if (activeRequest == null) trim()
                 if (fmt == null || samples.isEmpty()) {
                     cb(null)
                 } else {
-                    val a = audio?.snapshot(samples.first().ptsUs, samples.last().ptsUs)
+                    val a = if (timelapseStep > 0) null
+                    else audio?.snapshot(samples.first().ptsUs, samples.last().ptsUs)
                     cb(Clip(fmt, samples, samples.first().ptsUs, rotation, a))
                 }
             }

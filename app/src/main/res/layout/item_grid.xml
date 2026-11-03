@@ -20,6 +20,27 @@
         android:src="@drawable/ic_live_small"
         android:visibility="gone" />
 
+    <View
+        android:id="@+id/selShade"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#66FFFFFF"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/selCheck"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="5dp"
+        android:background="@drawable/bg_check"
+        android:gravity="center"
+        android:text="✓"
+        android:textColor="#000000"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/videoIcon"
         android:layout_width="wrap_content"

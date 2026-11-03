@@ -135,6 +135,18 @@ class ViewerActivity : ComponentActivity() {
         fxChip.setOnClickListener { showFxMenu() }
         favorite.setOnClickListener { toggleFavorite() }
         findViewById<ImageButton>(R.id.moreButton).setOnClickListener { showMoreMenu(it) }
+        findViewById<View>(R.id.editButton).setOnClickListener {
+            val item = items.getOrNull(current) ?: return@setOnClickListener
+            if (item.isVideo) {
+                say("La edición de videos llega pronto"); return@setOnClickListener
+            }
+            editLauncher.launch(
+                Intent(this, EditorActivity::class.java)
+                    .setData(item.uri)
+                    .putExtra(EditorActivity.EXTRA_OWN, item.isOwn)
+                    .putExtra(EditorActivity.EXTRA_LIVE, item.isLive)
+            )
+        }
         findViewById<TextView>(R.id.keyCancel).setOnClickListener { closeKeyPanel(apply = false) }
         findViewById<TextView>(R.id.keyApply).setOnClickListener { closeKeyPanel(apply = true) }
 
@@ -176,6 +188,15 @@ class ViewerActivity : ComponentActivity() {
             pendingDelete = null
         }
     private var pendingDelete: MediaRepo.Item? = null
+
+    private val editLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            if (res.resultCode == RESULT_OK) {
+                startId = items.getOrNull(current)?.id ?: startId
+                cacheDir.listFiles()?.filter { it.name.startsWith("live_") }?.forEach { it.delete() }
+                reload()
+            }
+        }
 
     private fun reload() {
         io.execute {

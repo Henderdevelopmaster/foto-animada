@@ -28,8 +28,12 @@
         </activity>
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="ocr,subject_segment" />
+            android:value="ocr,subject_segment,barcode" />
 
+        <activity
+            android:name=".EditorActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
         <activity
             android:name=".GalleryActivity"
             android:exported="false"

@@ -25,6 +25,19 @@ class GalleryActivity : ComponentActivity() {
     private var all = listOf<MediaRepo.Item>()
     private var album = MediaRepo.ALBUM_ALL
     private lateinit var albums: LinearLayout
+    private lateinit var selectButton: TextView
+    private lateinit var selectBar: View
+    private lateinit var selCount: TextView
+    private var selecting = false
+    private val selected = linkedSetOf<Long>()
+
+    private val deleteRequest =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()) {
+            if (it.resultCode == RESULT_OK) {
+                setSelecting(false)
+                reload()
+            }
+        }
     private val io = Executors.newFixedThreadPool(3)
 
     private val permission =
@@ -39,6 +52,13 @@ class GalleryActivity : ComponentActivity() {
 
         findViewById<ImageButton>(R.id.back).setOnClickListener { finish() }
         albums = findViewById(R.id.albums)
+        selectButton = findViewById(R.id.selectButton)
+        selectBar = findViewById(R.id.selectBar)
+        selCount = findViewById(R.id.selCount)
+        selectButton.setOnClickListener { setSelecting(!selecting) }
+        findViewById<View>(R.id.selShare).setOnClickListener { shareSelected() }
+        findViewById<View>(R.id.selDelete).setOnClickListener { deleteSelected() }
+        findViewById<View>(R.id.selFav).setOnClickListener { favSelected() }
         banner.setOnClickListener {
             GalleryAccess.markAsked(this)
             permission.launch(GalleryAccess.permissions())
@@ -59,6 +79,11 @@ class GalleryActivity : ComponentActivity() {
     override fun onRestart() {
         super.onRestart()
         reload()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (selecting) setSelecting(false) else super.onBackPressed()
     }
 
     private fun reload() {
@@ -121,6 +146,75 @@ class GalleryActivity : ComponentActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    // ---------- Selección (como iPhone) ----------
+
+    private fun setSelecting(on: Boolean) {
+        selecting = on
+        selected.clear()
+        selectButton.text = if (on) "Cancelar" else "Seleccionar"
+        selectBar.visibility = if (on) View.VISIBLE else View.GONE
+        grid.setPadding(0, 0, 0, if (on) dp(90) else 0)
+        updateSelCount()
+        grid.adapter?.notifyDataSetChanged()
+    }
+
+    private fun toggle(id: Long, pos: Int) {
+        if (!selected.add(id)) selected.remove(id)
+        grid.adapter?.notifyItemChanged(pos)
+        grid.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        updateSelCount()
+    }
+
+    private fun updateSelCount() {
+        selCount.text = when (selected.size) {
+            0 -> "Selecciona elementos"
+            1 -> "1 seleccionado"
+            else -> "${selected.size} seleccionados"
+        }
+    }
+
+    private fun selectedItems() = all.filter { it.id in selected }
+
+    private fun shareSelected() {
+        val list = selectedItems()
+        if (list.isEmpty()) return
+        val uris = ArrayList(list.map { it.uri })
+        val send = if (uris.size == 1) Intent(Intent.ACTION_SEND).apply {
+            type = if (list[0].isVideo) "video/*" else "image/*"
+            putExtra(Intent.EXTRA_STREAM, uris[0])
+        } else Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = if (list.any { it.isVideo }) "*/*" else "image/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(send, "Compartir"))
+    }
+
+    private fun favSelected() {
+        val favs = MediaRepo.favorites(this)
+        val list = selectedItems()
+        if (list.isEmpty()) return
+        val allFav = list.all { it.id.toString() in favs }
+        list.forEach { MediaRepo.setFavorite(this, it.id, !allFav) }
+        android.widget.Toast.makeText(
+            this, if (allFav) "Quitadas de favoritas" else "Agregadas a favoritas", android.widget.Toast.LENGTH_SHORT
+        ).show()
+        setSelecting(false)
+        showAlbum(album)
+    }
+
+    private fun deleteSelected() {
+        val list = selectedItems()
+        if (list.isEmpty()) return
+        // Android pide confirmar (como "Eliminar N fotos" en iPhone)
+        try {
+            val sender = android.provider.MediaStore.createDeleteRequest(contentResolver, list.map { it.uri }).intentSender
+            deleteRequest.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build())
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "No se pudo eliminar", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         io.shutdown()
@@ -130,6 +224,8 @@ class GalleryActivity : ComponentActivity() {
         val thumb: ImageView = view.findViewById(R.id.thumb)
         val live: View = view.findViewById(R.id.liveIcon)
         val duration: View = view.findViewById(R.id.videoIcon)
+        val shade: View = view.findViewById(R.id.selShade)
+        val check: View = view.findViewById(R.id.selCheck)
         var boundId = -1L
     }
 
@@ -140,8 +236,18 @@ class GalleryActivity : ComponentActivity() {
             val v = LayoutInflater.from(parent.context).inflate(R.layout.item_grid, parent, false)
             v.layoutParams.height = cell
             val h = Holder(v)
+            v.setOnLongClickListener {
+                val item = items.getOrNull(h.bindingAdapterPosition) ?: return@setOnLongClickListener false
+                if (!selecting) setSelecting(true)
+                toggle(item.id, h.bindingAdapterPosition)
+                true
+            }
             v.setOnClickListener {
                 val item = items.getOrNull(h.bindingAdapterPosition) ?: return@setOnClickListener
+                if (selecting) {
+                    toggle(item.id, h.bindingAdapterPosition)
+                    return@setOnClickListener
+                }
                 startActivity(
                     Intent(this@GalleryActivity, ViewerActivity::class.java)
                         .putExtra(ViewerActivity.EXTRA_ID, item.id)
@@ -155,6 +261,9 @@ class GalleryActivity : ComponentActivity() {
             val item = items[position]
             holder.live.visibility = if (item.isLive) View.VISIBLE else View.GONE
             holder.duration.visibility = if (item.isVideo) View.VISIBLE else View.GONE
+            val sel = item.id in selected
+            holder.shade.visibility = if (sel) View.VISIBLE else View.GONE
+            holder.check.visibility = if (sel) View.VISIBLE else View.GONE
             if (holder.boundId == item.id) return
             holder.boundId = item.id
             holder.thumb.setImageDrawable(null)

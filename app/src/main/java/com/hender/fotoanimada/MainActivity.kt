@@ -66,7 +66,10 @@ import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
-    enum class Mode { VIDEO, PHOTO, INSTANT }
+    enum class Mode(val label: String) {
+        TIMELAPSE("TIME-LAPSE"), VIDEO("VIDEO"), PHOTO("FOTO"),
+        PORTRAIT("RETRATO"), NIGHT("NOCHE"), INSTANT("INSTANTÁNEA")
+    }
 
     private lateinit var previewView: PreviewView
     private lateinit var shutter: ImageButton
@@ -76,9 +79,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var gridButton: ImageButton
     private lateinit var timerButton: TextView
     private lateinit var livePill: TextView
-    private lateinit var modeVideo: TextView
-    private lateinit var modePhoto: TextView
-    private lateinit var modeInstant: TextView
+    private lateinit var modeScroll: HorizontalScrollView
+    private lateinit var modeList: LinearLayout
+    private lateinit var captionPill: TextView
+    private lateinit var modeHint: TextView
+    private lateinit var qrChip: TextView
     private lateinit var toast: TextView
     private lateinit var countdown: TextView
     private lateinit var recTimer: TextView
@@ -141,9 +146,11 @@ class MainActivity : ComponentActivity() {
         gridButton = findViewById(R.id.gridButton)
         timerButton = findViewById(R.id.timerButton)
         livePill = findViewById(R.id.livePill)
-        modeVideo = findViewById(R.id.modeVideo)
-        modePhoto = findViewById(R.id.modePhoto)
-        modeInstant = findViewById(R.id.modeInstant)
+        modeScroll = findViewById(R.id.modeScroll)
+        modeList = findViewById(R.id.modeList)
+        captionPill = findViewById(R.id.captionPill)
+        modeHint = findViewById(R.id.modeHint)
+        qrChip = findViewById(R.id.qrChip)
         toast = findViewById(R.id.toast)
         countdown = findViewById(R.id.countdown)
         recTimer = findViewById(R.id.recTimer)
@@ -175,6 +182,8 @@ class MainActivity : ComponentActivity() {
         timerSecs = prefs.getInt(KEY_TIMER, 0)
         gridOn = prefs.getBoolean(KEY_GRID, false)
         recorder.audio = audio
+        caption = prefs.getString(KEY_CAPTION, "") ?: ""
+        buildModes()
         buildFilterChips()
         applyModeUi()
         applyTimerUi()
@@ -207,9 +216,10 @@ class MainActivity : ComponentActivity() {
             tap(it)
             applyGridUi()
         }
-        modeVideo.setOnClickListener { setMode(Mode.VIDEO) }
-        modePhoto.setOnClickListener { setMode(Mode.PHOTO) }
-        modeInstant.setOnClickListener { setMode(Mode.INSTANT) }
+        captionPill.setOnClickListener { editCaption() }
+        qrChip.setOnClickListener { openQr() }
+        findViewById<View>(R.id.resultDone).setOnClickListener { hideDevelop() }
+        findViewById<View>(R.id.resultSend).setOnClickListener { sendResult() }
         flip.setOnClickListener {
             if (busy || recording != null) return@setOnClickListener
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK)
@@ -220,7 +230,7 @@ class MainActivity : ComponentActivity() {
         thumbnail.setOnClickListener {
             if (recording == null) startActivity(Intent(this, ViewerActivity::class.java))
         }
-        developOverlay.setOnClickListener { hideDevelop() }
+        developOverlay.setOnClickListener { }
 
         val needed = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         if (needed.all { has(it) }) startCamera() else permissionLauncher.launch(needed)
@@ -230,10 +240,13 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         updateAudio()
         refreshThumbnail()
+        main.postDelayed(qrScan, 1200)
     }
 
     override fun onPause() {
         super.onPause()
+        main.removeCallbacks(qrScan)
+        if (timelapsing) stopTimelapse()
         if (quickTaking) stopQuickTake()
         bursting = false
         cancelCountdown()
@@ -248,36 +261,97 @@ class MainActivity : ComponentActivity() {
 
     private val liveActive get() = liveOn && mode == Mode.PHOTO
 
+    private val usesAnalysis get() = mode == Mode.PHOTO || mode == Mode.TIMELAPSE || mode == Mode.INSTANT
+
     // ---------- Modos, filtros, temporizador, cuadrícula ----------
 
     private fun setMode(m: Mode) {
-        if (mode == m || busy || recording != null || quickTaking) return
-        val wasVideo = mode == Mode.VIDEO
+        if (mode == m || busy || recording != null || quickTaking || timelapsing) return
+        val old = mode
         mode = m
         prefs.edit().putString(KEY_MODE, m.name).apply()
-        tap(modePhoto)
+        tap(modeList)
         applyModeUi()
-        if (wasVideo || m == Mode.VIDEO) bindCamera()
+        if (groupOf(old) != groupOf(m)) bindCamera()
+    }
+
+    /** Qué combinación de cámara necesita cada modo (si cambia, hay que reconectar). */
+    private fun groupOf(m: Mode) = when (m) {
+        Mode.VIDEO -> 1
+        Mode.NIGHT -> 2
+        Mode.PORTRAIT -> 3
+        else -> 0
+    }
+
+    private fun buildModes() {
+        modeList.removeAllViews()
+        val side = resources.displayMetrics.widthPixels / 2
+        modeList.setPadding(side, 0, side, 0)
+        for (m in Mode.entries) {
+            val tv = TextView(this).apply {
+                text = m.label
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(dp(13), dp(4), dp(13), dp(4))
+                tag = m
+                setOnClickListener { setMode(m) }
+            }
+            modeList.addView(tv)
+        }
+    }
+
+    private fun centerMode() {
+        val v = modeList.findViewWithTag<View>(mode) ?: return
+        modeScroll.post {
+            modeScroll.smoothScrollTo(v.left + v.width / 2 - modeScroll.width / 2, 0)
+        }
+    }
+
+    private fun swipeMode(dir: Int) {
+        val all = Mode.entries
+        val next = all.getOrNull(all.indexOf(mode) + dir) ?: return
+        setMode(next)
     }
 
     private fun applyModeUi() {
         val green = 0xFF00E676.toInt()
         val white = 0xCCFFFFFF.toInt()
-        modeVideo.setTextColor(if (mode == Mode.VIDEO) green else white)
-        modePhoto.setTextColor(if (mode == Mode.PHOTO) green else white)
-        modeInstant.setTextColor(if (mode == Mode.INSTANT) green else white)
+        for (i in 0 until modeList.childCount) {
+            val v = modeList.getChildAt(i) as TextView
+            v.setTextColor(if (v.tag == mode) green else white)
+        }
+        centerMode()
+        previewView.scaleType = if (mode == Mode.VIDEO) PreviewView.ScaleType.FILL_CENTER
+        else PreviewView.ScaleType.FIT_START
+        captionPill.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
+        captionPill.text = caption.ifBlank { "Toca para escribir algo" }
+        qrChip.visibility = View.GONE
+        val hint = when (mode) {
+            Mode.PORTRAIT -> "El fondo se desenfoca al tomar la foto"
+            Mode.NIGHT -> "Mantén el cel quieto al disparar"
+            Mode.TIMELAPSE -> "Toca para empezar y para terminar"
+            Mode.INSTANT -> "Toca para foto · mantén para video"
+            else -> null
+        }
+        modeHint.text = hint
+        modeHint.visibility = if (hint != null) View.VISIBLE else View.GONE
+        modeHint.alpha = 1f
+        modeHint.animate().alpha(0f).setStartDelay(2500).setDuration(400).start()
 
         liveToggle.visibility = if (mode == Mode.PHOTO) View.VISIBLE else View.INVISIBLE
         liveToggle.setImageResource(if (liveOn) R.drawable.ic_live_on else R.drawable.ic_live_off)
-        filterButton.visibility = if (mode == Mode.VIDEO) View.INVISIBLE else View.VISIBLE
-        if (mode == Mode.VIDEO) filterBar.visibility = View.GONE
-        shutter.setBackgroundResource(if (mode == Mode.VIDEO) R.drawable.shutter_rec else R.drawable.shutter)
+        val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE
+        filterButton.visibility = if (noFilter) View.INVISIBLE else View.VISIBLE
+        if (noFilter) filterBar.visibility = View.GONE
+        shutter.setBackgroundResource(
+            if (mode == Mode.VIDEO || mode == Mode.TIMELAPSE) R.drawable.shutter_rec else R.drawable.shutter
+        )
         recorder.enabled = liveActive
         updateAudio()
         applyPreviewFilter()
 
         // Guías de recorte cuadrado para la instantánea
-        val show = mode == Mode.INSTANT
+        val show = false
         previewView.post {
             val w = previewView.width
             val photoH = w * 4 / 3
@@ -335,7 +409,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applyPreviewFilter() {
-        val active = if (mode == Mode.VIDEO) PhotoFilter.ORIGINAL else filter
+        val active = if (mode == Mode.VIDEO || mode == Mode.TIMELAPSE) PhotoFilter.ORIGINAL else filter
         findTexture(previewView)?.setLayerPaint(
             if (active == PhotoFilter.ORIGINAL) null else Paint().apply { colorFilter = active.colorFilter() }
         )
@@ -371,10 +445,25 @@ class MainActivity : ComponentActivity() {
                 return true
             }
         })
+        var downX = 0f
+        var downY = 0f
+        var multi = false
         previewView.setOnTouchListener { _, ev ->
             scale.onTouchEvent(ev)
-            if (ev.actionMasked == MotionEvent.ACTION_UP && !scale.isInProgress && ev.eventTime - ev.downTime < 250) {
-                focusAt(ev.x, ev.y)
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.x; downY = ev.y; multi = false
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> multi = true
+                MotionEvent.ACTION_UP -> {
+                    val dx = ev.x - downX
+                    val dy = ev.y - downY
+                    when {
+                        multi || scale.isInProgress -> {}
+                        abs(dx) > dp(70) && abs(dx) > abs(dy) * 1.5f -> swipeMode(if (dx < 0) 1 else -1)
+                        ev.eventTime - ev.downTime < 250 && abs(dx) < dp(10) -> focusAt(ev.x, ev.y)
+                    }
+                }
             }
             true
         }
@@ -388,8 +477,8 @@ class MainActivity : ComponentActivity() {
             val near2 = abs(r - 2f) < 0.05f
             zoom1.isSelected = r < 1.95f
             zoom2.isSelected = r >= 1.95f
-            zoom1.text = if (r < 1.95f) String.format(Locale.US, "%.1fx", r).replace(".0x", "x") else "1"
-            zoom2.text = if (r >= 1.95f && !near2) String.format(Locale.US, "%.1fx", r) else if (near2) "2x" else "2"
+            zoom1.text = if (r < 1.95f) String.format(Locale.US, "%.1fx", r).replace(".0x", "x") else "1x"
+            zoom2.text = if (r >= 1.95f && !near2) String.format(Locale.US, "%.1fx", r) else "2x"
         }
     }
 
@@ -415,7 +504,7 @@ class MainActivity : ComponentActivity() {
         var downX = 0f
         var longStarted = false
         val longPress = Runnable {
-            if (mode == Mode.PHOTO && !busy) {
+            if ((mode == Mode.PHOTO || mode == Mode.INSTANT) && !busy) {
                 longStarted = true
                 startQuickTake()
             }
@@ -426,7 +515,7 @@ class MainActivity : ComponentActivity() {
                     downX = ev.rawX
                     longStarted = false
                     v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start()
-                    if (mode == Mode.PHOTO && timerSecs == 0) main.postDelayed(longPress, 400)
+                    if ((mode == Mode.PHOTO || mode == Mode.INSTANT) && timerSecs == 0) main.postDelayed(longPress, 400)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ev.rawX - downX
@@ -453,6 +542,7 @@ class MainActivity : ComponentActivity() {
     private fun onShutterTap() {
         when {
             mode == Mode.VIDEO -> toggleVideo()
+            mode == Mode.TIMELAPSE -> if (timelapsing) stopTimelapse() else startTimelapse()
             countingDown -> cancelCountdown()
             timerSecs > 0 -> startCountdown()
             else -> capture()
@@ -501,7 +591,7 @@ class MainActivity : ComponentActivity() {
             if (!quickTaking) return
             val secs = ((System.currentTimeMillis() - quickStart) / 1000).toInt()
             recTimer.text = String.format(Locale.US, "%d:%02d", secs / 60, secs % 60)
-            if (secs >= MAX_QUICKTAKE_S) {
+            if (secs >= (if (mode == Mode.INSTANT) 15 else MAX_QUICKTAKE_S)) {
                 stopQuickTake()
                 return
             }
@@ -540,7 +630,12 @@ class MainActivity : ComponentActivity() {
                     if (clip == null) msg = "No se pudo grabar el video"
                     else {
                         val mp4 = MotionPhotoWriter.muxToMp4(clip, cacheDir)
-                        Exporter.saveVideoBytes(this, mp4.bytes)
+                        val instant = mode == Mode.INSTANT
+                        val uri = Exporter.saveVideoBytes(this, mp4.bytes, if (instant) "_INSTANT" else "")
+                        if (instant) {
+                            val thumb = MediaRepo.thumbnail(this, uri, 1080)
+                            runOnUiThread { showResult(thumb, uri, "video/mp4") }
+                        }
                     }
                 } catch (e: Throwable) {
                     Log.e(TAG, "QuickTake", e)
@@ -663,7 +758,12 @@ class MainActivity : ComponentActivity() {
     private fun bindCamera() {
         val provider = provider ?: return
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        val group = if (mode == Mode.VIDEO) buildVideoGroup() else buildPhotoGroup()
+        val group = when (mode) {
+            Mode.VIDEO -> buildVideoGroup()
+            Mode.NIGHT -> buildPhotoGroup(night = true, analysis = false)
+            Mode.PORTRAIT -> buildPhotoGroup(night = false, analysis = false)
+            else -> buildPhotoGroup(night = false, analysis = true)
+        }
         try {
             provider.unbindAll()
             camera = provider.bindToLifecycle(this, selector, group)
@@ -674,18 +774,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun buildPhotoGroup(): UseCaseGroup {
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    private fun buildPhotoGroup(night: Boolean, analysis: Boolean): UseCaseGroup {
         videoCapture = null
         val ratio43 = ResolutionSelector.Builder()
             .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
             .build()
-        val preview = Preview.Builder().setResolutionSelector(ratio43).build()
-            .also { it.setSurfaceProvider(previewView.surfaceProvider) }
-        val capture = ImageCapture.Builder()
+        val previewB = Preview.Builder().setResolutionSelector(ratio43)
+        val captureB = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setResolutionSelector(ratio43)
-            .build()
-        val analysis = ImageAnalysis.Builder()
+        if (night) {
+            // Noche: dejar que la cámara use exposiciones más largas y reducción de ruido fuerte
+            val range = nightFpsRange()
+            for (ext in listOf(
+                androidx.camera.camera2.interop.Camera2Interop.Extender(previewB),
+                androidx.camera.camera2.interop.Camera2Interop.Extender(captureB),
+            )) {
+                range?.let { ext.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+                ext.setCaptureRequestOption(
+                    android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE,
+                    android.hardware.camera2.CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+                )
+            }
+        }
+        val preview = previewB.build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val capture = captureB.build()
+        imageCapture = capture
+        if (!analysis) {
+            return UseCaseGroup.Builder()
+                .setViewPort(ViewPort.Builder(Rational(3, 4), Surface.ROTATION_0).build())
+                .addUseCase(preview)
+                .addUseCase(capture)
+                .build()
+        }
+        val analysisUc = ImageAnalysis.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
@@ -698,14 +821,31 @@ class MainActivity : ComponentActivity() {
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()
             .also { it.setAnalyzer(analysisExecutor, recorder) }
-        imageCapture = capture
         // Mismo encuadre 3:4 para vista previa, foto y video
         return UseCaseGroup.Builder()
             .setViewPort(ViewPort.Builder(Rational(3, 4), Surface.ROTATION_0).build())
             .addUseCase(preview)
             .addUseCase(capture)
-            .addUseCase(analysis)
+            .addUseCase(analysisUc)
             .build()
+    }
+
+    /** El rango de fps más bajo que soporte la cámara (más luz por cuadro). */
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    private fun nightFpsRange(): android.util.Range<Int>? = try {
+        val info = provider?.availableCameraInfos?.firstOrNull {
+            androidx.camera.camera2.interop.Camera2CameraInfo.from(it)
+                .getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+                (if (lensFacing == CameraSelector.LENS_FACING_BACK) android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+                else android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT)
+        }
+        val ranges = info?.let {
+            androidx.camera.camera2.interop.Camera2CameraInfo.from(it)
+                .getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+        }
+        ranges?.minWithOrNull(compareBy<android.util.Range<Int>>({ it.lower }, { it.upper }))
+    } catch (_: Exception) {
+        null
     }
 
     private fun buildVideoGroup(): UseCaseGroup {
@@ -743,6 +883,7 @@ class MainActivity : ComponentActivity() {
 
         val live = liveActive
         val currentMode = mode
+        if (mode == Mode.PORTRAIT || mode == Mode.NIGHT) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
         if (live) {
             livePill.visibility = View.VISIBLE
@@ -761,8 +902,12 @@ class MainActivity : ComponentActivity() {
             }
             ioExecutor.execute {
                 val (p, c) = synchronized(lock) { photo to clip }
-                if (currentMode == Mode.INSTANT) saveInstant(p, currentFilter)
-                else saveResult(p, c, live, currentFilter)
+                when (currentMode) {
+                    Mode.INSTANT -> saveInstant(p, currentFilter)
+                    Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") { Processing.portrait(it, currentFilter) }
+                    Mode.NIGHT -> saveProcessed(p, "_NOCHE") { Processing.night(it, currentFilter) }
+                    else -> saveResult(p, c, live, currentFilter)
+                }
             }
         }
 
@@ -823,14 +968,196 @@ class MainActivity : ComponentActivity() {
             return
         }
         try {
-            val bmp = MotionPhotoWriter.makeInstant(photo, f)
-            runOnUiThread { showDevelop(bmp) }
-            MotionPhotoWriter.save(this, MotionPhotoWriter.encodeInstant(bmp), null, "_INST")
+            val bmp = Processing.captioned(photo, caption, f)
+            val uri = MotionPhotoWriter.save(this, Processing.encode(bmp, 93), null, "_INSTANT")
+            runOnUiThread { showResult(bmp, uri, "image/jpeg") }
             finishSave(null)
         } catch (e: Throwable) {
             Log.e(TAG, "Error en instantánea", e)
             finishSave("Error: ${e.message}")
         }
+    }
+
+    private fun saveProcessed(photo: ByteArray?, suffix: String, process: (ByteArray) -> ByteArray) {
+        if (photo == null) {
+            finishSave("No se pudo tomar la foto")
+            return
+        }
+        val msg = try {
+            MotionPhotoWriter.save(this, process(photo), null, suffix)
+            null
+        } catch (e: Throwable) {
+            Log.e(TAG, "Proceso $suffix", e)
+            // Si falla (ej. el modelo aún se descarga), guardar la foto normal
+            try {
+                MotionPhotoWriter.save(this, photo, null)
+            } catch (_: Throwable) {
+            }
+            "Se guardó sin efecto: ${e.message}"
+        }
+        finishSave(msg)
+    }
+
+    // ---------- Instantánea tipo IG ----------
+
+    private var caption = ""
+    private var resultUri: android.net.Uri? = null
+    private var resultMime = "image/jpeg"
+
+    private fun editCaption() {
+        val input = android.widget.EditText(this).apply {
+            setText(caption)
+            setSelection(caption.length)
+            hint = "Escribe algo…"
+            maxLines = 3
+            setPadding(dp(20), dp(14), dp(20), dp(14))
+        }
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Texto de la instantánea")
+            .setView(input)
+            .setPositiveButton("Listo") { _, _ ->
+                caption = input.text.toString().trim()
+                prefs.edit().putString(KEY_CAPTION, caption).apply()
+                captionPill.text = caption.ifBlank { "Toca para escribir algo" }
+            }
+            .setNeutralButton("Borrar") { _, _ ->
+                caption = ""
+                prefs.edit().putString(KEY_CAPTION, "").apply()
+                captionPill.text = "Toca para escribir algo"
+            }
+            .show()
+    }
+
+    private fun showResult(bmp: Bitmap?, uri: android.net.Uri, mime: String) {
+        resultUri = uri
+        resultMime = mime
+        captionPill.visibility = View.GONE
+        developOverlay.visibility = View.VISIBLE
+        developOverlay.alpha = 0f
+        developOverlay.animate().alpha(1f).setDuration(200).start()
+        developImage.setImageBitmap(bmp)
+        developImage.scaleX = 0.85f
+        developImage.scaleY = 0.85f
+        developImage.rotation = -2f
+        developImage.animate().scaleX(1f).scaleY(1f).rotation(0f).setDuration(350).start()
+    }
+
+    private fun sendResult() {
+        val uri = resultUri ?: return
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = resultMime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "Enviar instantánea"))
+        hideDevelop()
+    }
+
+    // ---------- Time-lapse ----------
+
+    private var timelapsing = false
+    private var timelapseStart = 0L
+    private val timelapseTick = object : Runnable {
+        override fun run() {
+            if (!timelapsing) return
+            val secs = ((System.currentTimeMillis() - timelapseStart) / 1000).toInt()
+            recTimer.text = String.format(Locale.US, "%d:%02d", secs / 60, secs % 60)
+            if (secs >= 300) {
+                stopTimelapse(); return
+            }
+            main.postDelayed(this, 500)
+        }
+    }
+
+    private fun startTimelapse() {
+        if (busy) return
+        timelapsing = true
+        busy = true
+        timelapseStart = System.currentTimeMillis()
+        recorder.timelapseStep = 15
+        recorder.enabled = true
+        recorder.startLong()
+        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        shutter.setBackgroundResource(R.drawable.shutter_stop)
+        recTimer.visibility = View.VISIBLE
+        recTimer.text = "0:00"
+        main.post(timelapseTick)
+    }
+
+    private fun stopTimelapse() {
+        if (!timelapsing) return
+        timelapsing = false
+        main.removeCallbacks(timelapseTick)
+        sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        shutter.setBackgroundResource(R.drawable.shutter_rec)
+        recTimer.visibility = View.GONE
+        showToast("Guardando time-lapse…")
+        recorder.stopLong { clip ->
+            ioExecutor.execute {
+                var msg: String? = null
+                try {
+                    if (clip == null || clip.samples.size < 10) msg = "Graba un poco más para el time-lapse"
+                    else Exporter.saveVideoBytes(this, MotionPhotoWriter.muxToMp4(clip, cacheDir).bytes, "_TIMELAPSE")
+                } catch (e: Throwable) {
+                    msg = "Error: ${e.message}"
+                }
+                runOnUiThread {
+                    recorder.timelapseStep = 0
+                    recorder.enabled = liveActive
+                }
+                finishSave(msg)
+            }
+        }
+    }
+
+    // ---------- Lector QR (como iPhone: aparece solo en modo foto) ----------
+
+    private var qrValue: String? = null
+    private var qrBusy = false
+    private val scanner by lazy {
+        com.google.mlkit.vision.barcode.BarcodeScanning.getClient(
+            com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE)
+                .build()
+        )
+    }
+    private val qrScan = object : Runnable {
+        override fun run() {
+            main.postDelayed(this, 800)
+            if (qrBusy || busy || (mode != Mode.PHOTO && mode != Mode.PORTRAIT && mode != Mode.NIGHT)) return
+            val bmp = previewView.bitmap ?: return
+            val small = Bitmap.createScaledBitmap(bmp, bmp.width / 2, bmp.height / 2, true)
+            qrBusy = true
+            scanner.process(com.google.mlkit.vision.common.InputImage.fromBitmap(small, 0))
+                .addOnSuccessListener { codes ->
+                    val v = codes.firstOrNull()?.rawValue
+                    if (v != null) {
+                        if (v != qrValue) shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        qrValue = v
+                        val label = if (v.startsWith("http")) "Abrir " + android.net.Uri.parse(v).host else "QR: $v"
+                        qrChip.text = label
+                        qrChip.visibility = View.VISIBLE
+                        qrChip.removeCallbacks(hideQr)
+                        qrChip.postDelayed(hideQr, 2500)
+                    }
+                }
+                .addOnCompleteListener { qrBusy = false }
+        }
+    }
+    private val hideQr = Runnable { qrChip.visibility = View.GONE; qrValue = null }
+
+    private fun openQr() {
+        val v = qrValue ?: return
+        if (v.startsWith("http://") || v.startsWith("https://")) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(v)))
+                return
+            } catch (_: Exception) {
+            }
+        }
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("QR", v))
+        showToast("Texto del QR copiado")
     }
 
     private fun finishSave(message: String?) {
@@ -853,41 +1180,6 @@ class MainActivity : ComponentActivity() {
 
     private var developAnim: ValueAnimator? = null
 
-    private fun showDevelop(bmp: Bitmap) {
-        developOverlay.visibility = View.VISIBLE
-        developOverlay.alpha = 0f
-        developOverlay.animate().alpha(1f).setDuration(200).start()
-        developImage.setImageBitmap(bmp)
-        developImage.translationY = developOverlay.height.toFloat()
-        developImage.rotation = -3f
-        developImage.animate().translationY(0f).rotation(0f).setDuration(600).start()
-
-        developAnim?.cancel()
-        developAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 3200
-            startDelay = 400
-            addUpdateListener {
-                val t = it.animatedValue as Float
-                val cm = ColorMatrix().apply { setSaturation(t) }
-                val b = -120f * (1 - t)
-                val k = 0.55f + 0.45f * t
-                cm.postConcat(
-                    ColorMatrix(
-                        floatArrayOf(
-                            k, 0f, 0f, 0f, b + 30f * (1 - t),
-                            0f, k, 0f, 0f, b + 30f * (1 - t),
-                            0f, 0f, k, 0f, b + 45f * (1 - t),
-                            0f, 0f, 0f, 1f, 0f,
-                        )
-                    )
-                )
-                developImage.colorFilter = ColorMatrixColorFilter(cm)
-            }
-            start()
-        }
-        developOverlay.postDelayed({ hideDevelop() }, 5200)
-    }
-
     private fun hideDevelop() {
         if (developOverlay.visibility != View.VISIBLE) return
         developAnim?.cancel()
@@ -895,6 +1187,7 @@ class MainActivity : ComponentActivity() {
         developOverlay.animate().alpha(0f).setDuration(250).withEndAction {
             developOverlay.visibility = View.GONE
             developImage.setImageDrawable(null)
+            if (mode == Mode.INSTANT) captionPill.visibility = View.VISIBLE
         }.start()
     }
 
@@ -933,6 +1226,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_MODE = "mode"
         private const val KEY_TIMER = "timer"
         private const val KEY_GRID = "grid"
+        private const val KEY_CAPTION = "caption"
         private const val MAX_QUICKTAKE_S = 60
     }
 }

@@ -20,7 +20,7 @@ object MediaRepo {
         val album: String = "",
         val name: String = "",
     ) {
-        val isOwn: Boolean get() = name.startsWith("MVIMG_") || name.startsWith("IMG_") || name.startsWith("VID_")
+        val isOwn: Boolean get() = album == "Camaratrix" || album == "FotoAnimada"
     }
 
     /** Álbumes fijos. Los demás son las carpetas del celular. */

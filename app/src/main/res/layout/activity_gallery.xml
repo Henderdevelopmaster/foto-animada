@@ -44,6 +44,17 @@
                 android:textColor="#99FFFFFF"
                 android:textSize="13sp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/selectButton"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:background="@drawable/bg_chip"
+            android:gravity="center"
+            android:paddingHorizontal="14dp"
+            android:text="Seleccionar"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
     </LinearLayout>
 
     <TextView
@@ -72,8 +83,63 @@
             android:paddingHorizontal="12dp" />
     </HorizontalScrollView>
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/grid"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/grid"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false" />
+
+        <LinearLayout
+            android:id="@+id/selectBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="#F2111111"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="28dp"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="12dp"
+            android:visibility="gone">
+
+            <ImageButton
+                android:id="@+id/selShare"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Compartir"
+                android:src="@drawable/ic_share" />
+
+            <TextView
+                android:id="@+id/selCount"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="Selecciona elementos"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/selFav"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Favoritas"
+                android:src="@drawable/ic_heart" />
+
+            <ImageButton
+                android:id="@+id/selDelete"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Eliminar"
+                android:src="@drawable/ic_delete" />
+        </LinearLayout>
+    </FrameLayout>
 </LinearLayout>

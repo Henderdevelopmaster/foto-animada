@@ -225,11 +225,92 @@
                 android:id="@+id/developImage"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_margin="36dp"
+                android:layout_marginBottom="84dp"
+                android:layout_marginHorizontal="28dp"
+                android:layout_marginTop="24dp"
                 android:adjustViewBounds="true"
                 android:elevation="8dp"
                 android:scaleType="fitCenter" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:layout_marginBottom="20dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/resultDone"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="16dp"
+                    android:background="@drawable/bg_chip"
+                    android:gravity="center"
+                    android:paddingHorizontal="26dp"
+                    android:text="Listo"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/resultSend"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:background="@drawable/bg_live_pill"
+                    android:gravity="center"
+                    android:paddingHorizontal="26dp"
+                    android:text="Enviar"
+                    android:textColor="#000000"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
         </FrameLayout>
+
+        <TextView
+            android:id="@+id/captionPill"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginHorizontal="32dp"
+            android:background="@drawable/bg_badge"
+            android:gravity="center"
+            android:maxLines="3"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="10dp"
+            android:text="Toca para escribir algo"
+            android:textColor="#FFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/modeHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="48dp"
+            android:background="@drawable/bg_badge"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="5dp"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/qrChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginHorizontal="40dp"
+            android:background="@drawable/bg_live_pill"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="8dp"
+            android:textColor="#000000"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
     </FrameLayout>
 
     <!-- Panel inferior -->
@@ -240,43 +321,20 @@
         android:paddingBottom="36dp"
         android:paddingTop="14dp">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
+        <HorizontalScrollView
+            android:id="@+id/modeScroll"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="18dp"
-            android:orientation="horizontal">
+            android:layout_marginBottom="14dp"
+            android:overScrollMode="never"
+            android:scrollbars="none">
 
-            <TextView
-                android:id="@+id/modeVideo"
+            <LinearLayout
+                android:id="@+id/modeList"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="4dp"
-                android:text="VIDEO"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/modePhoto"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="4dp"
-                android:text="FOTO"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/modeInstant"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="4dp"
-                android:text="INSTANTÁNEA"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-        </LinearLayout>
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
         <FrameLayout
             android:layout_width="match_parent"
