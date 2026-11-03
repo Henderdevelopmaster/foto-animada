@@ -270,7 +270,7 @@ class EffectRenderer(private val context: Context) {
         paint.colorFilter = colorFilter(effect, nowMs)
         paint.alpha = 255
         val face = faces.firstOrNull()
-        if (effect.warp != null && face != null) {
+        if ((effect.warp != null || Beauty.warps) && face != null) {
             drawWarped(canvas, frame, faces, effect, sx, sy)
         } else if (effect.mirror) {
             // Espejo: la mitad izquierda reflejada a la derecha
@@ -291,6 +291,8 @@ class EffectRenderer(private val context: Context) {
             canvas.restore()
         }
         paint.colorFilter = null
+
+        if (Beauty.smooth > 0.01f && faces.isNotEmpty()) drawSmooth(canvas, frame, faces, sx, sy)
 
         if (effect.glitch) drawGlitch(canvas, frame, nowMs, sx, sy)
         if (effect.scanlines) drawScanlines(canvas, outW, outH)
@@ -339,7 +341,18 @@ class EffectRenderer(private val context: Context) {
 
     private fun colorFilter(effect: FaceEffect, nowMs: Long): ColorMatrixColorFilter? {
         val m = effect.filter.matrix()
-        if (effect.filter == PhotoFilter.ORIGINAL && !effect.glitch) return null
+        if (Beauty.bright > 0.01f) {
+            // Iluminar: sube sombras y da un tono cálido suave
+            val t = Beauty.bright * 34f
+            val k = 1f - t / 255f
+            m.postConcat(ColorMatrix(floatArrayOf(
+                k * 1.02f, 0f, 0f, 0f, t + 4f * Beauty.bright,
+                0f, k, 0f, 0f, t,
+                0f, 0f, k * 0.98f, 0f, t - 2f * Beauty.bright,
+                0f, 0f, 0f, 1f, 0f,
+            )))
+        }
+        if (effect.filter == PhotoFilter.ORIGINAL && !effect.glitch && Beauty.bright <= 0.01f) return null
         if (effect.glitch) {
             // Ligero parpadeo de contraste
             val k = 1f + 0.08f * sin(nowMs / 90.0).toFloat()
@@ -384,6 +397,70 @@ class EffectRenderer(private val context: Context) {
 
     private val linePaint = Paint().apply { color = 0x26000000 }
 
+    // ---------- Belleza: piel suave ----------
+    private var smallFrame: Bitmap? = null
+    private val smoothPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * Piel suave: una versión borrosa de la imagen solo dentro del óvalo de la cara,
+     * dejando nítidos ojos, cejas y boca.
+     */
+    private fun drawSmooth(canvas: Canvas, frame: Bitmap, faces: List<FaceGeom>, sx: Float, sy: Float) {
+        val w = (frame.width / 6).coerceAtLeast(2)
+        val h = (frame.height / 6).coerceAtLeast(2)
+        var sm = smallFrame
+        if (sm == null || sm.width != w || sm.height != h) {
+            sm = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            smallFrame = sm
+        }
+        Canvas(sm!!).drawBitmap(frame, null, android.graphics.Rect(0, 0, w, h), smoothPaint)
+        val outW = frame.width * sx
+        val outH = frame.height * sy
+        val layer = canvas.saveLayer(0f, 0f, outW, outH, null)
+        smoothPaint.alpha = (Beauty.smooth * 215).toInt()
+        canvas.drawBitmap(sm, null, android.graphics.RectF(0f, 0f, outW, outH), smoothPaint)
+        smoothPaint.alpha = 255
+        // Máscara: óvalo de la cara (suave en el borde)
+        maskPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+        val maskLayer = canvas.saveLayer(0f, 0f, outW, outH, maskPaint)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        for (f in faces) {
+            val cx = (f.nose.x) * sx
+            val cy = ((f.eyes.y + f.mouth.y) / 2f) * sy
+            val rx = f.faceWidth * 0.5f * sx
+            val ry = f.faceWidth * 0.68f * sy
+            fill.shader = android.graphics.RadialGradient(
+                0f, 0f, 1f, intArrayOf(Color.BLACK, Color.BLACK, Color.TRANSPARENT),
+                floatArrayOf(0f, 0.72f, 1f), android.graphics.Shader.TileMode.CLAMP
+            )
+            canvas.save()
+            canvas.translate(cx, cy)
+            canvas.rotate(Math.toDegrees(f.angle.toDouble()).toFloat())
+            canvas.scale(rx, ry)
+            canvas.drawCircle(0f, 0f, 1f, fill)
+            canvas.restore()
+            // Quitar ojos y boca para que queden nítidos
+            fill.shader = null
+            fill.color = Color.BLACK
+            fill.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
+            for (e in listOf(f.leftEye, f.rightEye)) {
+                canvas.drawOval(
+                    (e.x - f.faceWidth * 0.17f) * sx, (e.y - f.faceWidth * 0.14f) * sy,
+                    (e.x + f.faceWidth * 0.17f) * sx, (e.y + f.faceWidth * 0.09f) * sy, fill
+                )
+            }
+            canvas.drawOval(
+                (f.mouth.x - f.faceWidth * 0.2f) * sx, (f.mouth.y - f.faceWidth * 0.08f) * sy,
+                (f.mouth.x + f.faceWidth * 0.2f) * sx, (f.mouth.y + f.faceWidth * 0.1f) * sy, fill
+            )
+            fill.xfermode = null
+        }
+        canvas.restoreToCount(maskLayer)
+        canvas.restoreToCount(layer)
+    }
+
     private fun drawScanlines(canvas: Canvas, w: Int, h: Int) {
         var y = 0f
         while (y < h) {
@@ -405,8 +482,10 @@ class EffectRenderer(private val context: Context) {
             for (c in 0..cols) {
                 var x = fw * c / cols
                 var y = fh * r / rows
+                val eyesK = (if (effect.warp == "bigEyes") effect.warpStrength else 0f) + Beauty.eyes * 0.28f
+                val slimK = (if (effect.warp == "slim") effect.warpStrength else 0f) + Beauty.slim * 0.55f
                 for (f in faces) {
-                    if (effect.warp == "bigEyes") {
+                    if (eyesK > 0f) {
                         for (eye in listOf(f.leftEye, f.rightEye)) {
                             val rad = f.faceWidth * 0.32f
                             val dx = x - eye.x
@@ -414,12 +493,13 @@ class EffectRenderer(private val context: Context) {
                             val d = hypot(dx, dy)
                             if (d < rad) {
                                 val t = 1f - d / rad
-                                val k = 1f + effect.warpStrength * t * t
+                                val k = 1f + eyesK * t * t
                                 x = eye.x + dx * k
                                 y = eye.y + dy * k
                             }
                         }
-                    } else if (effect.warp == "slim") {
+                    }
+                    if (slimK > 0f) {
                         // Acercar las mejillas al centro, de los ojos hacia abajo
                         val cx = f.nose.x
                         val top = f.eyes.y
@@ -430,7 +510,7 @@ class EffectRenderer(private val context: Context) {
                             if (kotlin.math.abs(dx) < half) {
                                 val vy = sin(((y - top) / (bottom - top)) * Math.PI).toFloat()
                                 val t = 1f - kotlin.math.abs(dx) / half
-                                x -= dx * effect.warpStrength * 0.35f * t * vy
+                                x -= dx * slimK * 0.35f * t * vy
                             }
                         }
                     }

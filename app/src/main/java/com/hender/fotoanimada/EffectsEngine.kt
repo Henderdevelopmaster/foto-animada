@@ -42,14 +42,18 @@ class FaceOverlayView @JvmOverloads constructor(
     @Volatile
     var effect: FaceEffect? = null
 
-    /** Ancho de la imagen analizada (para convertir a pixeles de la vista). */
+    /** Tamaño de la imagen analizada (para convertir a pixeles de la vista). */
     @Volatile
     var imageWidth = 0
 
+    @Volatile
+    var imageHeight = 0
+
     override fun onDraw(canvas: Canvas) {
         val fx = effect ?: return
-        if (imageWidth <= 0) return
-        val s = width.toFloat() / imageWidth
+        if (imageWidth <= 0 || imageHeight <= 0) return
+        // Misma escala que la vista previa (llena el ancho, anclada arriba)
+        val s = maxOf(width.toFloat() / imageWidth, height.toFloat() / imageHeight)
         renderer.drawOverlay(canvas, faces, fx, System.currentTimeMillis(), s, s)
         if (fx.particles != null) postInvalidateOnAnimation()
     }
@@ -124,7 +128,10 @@ class EffectsEngine(
         recStop.getAndSet(cb)?.invoke(null)
     }
 
-    private fun fullFrame(fx: FaceEffect) = EffectRenderer.needsFrame(fx)
+    private fun fullFrame(fx: FaceEffect) = EffectRenderer.needsFrame(fx) || Beauty.active
+
+    /** Llamar cuando cambia la belleza (cambia de capa si hace falta). */
+    fun refresh() = overlay.post { updateViews() }
 
     /** Muestra la capa de cuadro completo o la de stickers según el efecto. */
     private fun updateViews() {
@@ -160,6 +167,7 @@ class EffectsEngine(
             Canvas(up!!).drawBitmap(src, m, null)
             src.recycle()
             overlay.imageWidth = uw
+            overlay.imageHeight = uh
 
             detectAsync(up, fx, uw)
 
@@ -186,7 +194,7 @@ class EffectsEngine(
 
     /** Detecta caras sobre una copia pequeña, sin hacer esperar al cuadro. */
     private fun detectAsync(up: Bitmap, fx: FaceEffect, uw: Int) {
-        if (fx.isNone || !detecting.compareAndSet(false, true)) return
+        if ((fx.isNone && !Beauty.active) || !detecting.compareAndSet(false, true)) return
         val sm = small!!
         Canvas(sm).drawBitmap(up, null, Rect(0, 0, sm.width, sm.height), null)
         val copy = sm.copy(Bitmap.Config.ARGB_8888, false)
@@ -214,7 +222,7 @@ class EffectsEngine(
         val c = frameView.lockCanvas() ?: return
         try {
             c.drawColor(Color.BLACK)
-            val s = minOf(c.width.toFloat() / bmp.width, c.height.toFloat() / bmp.height)
+            val s = maxOf(c.width.toFloat() / bmp.width, c.height.toFloat() / bmp.height)
             c.save()
             c.scale(s, s)
             c.drawBitmap(bmp, 0f, 0f, null)

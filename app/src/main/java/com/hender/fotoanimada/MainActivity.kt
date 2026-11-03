@@ -87,6 +87,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var qrChip: TextView
     private lateinit var effectView: TextureView
     private lateinit var faceOverlay: FaceOverlayView
+    private lateinit var beautyButton: ImageButton
+    private lateinit var beautyPanel: LinearLayout
     private lateinit var effectBar: HorizontalScrollView
     private lateinit var effectList: LinearLayout
     private lateinit var effectName: TextView
@@ -166,6 +168,20 @@ class MainActivity : ComponentActivity() {
         qrChip = findViewById(R.id.qrChip)
         effectView = findViewById(R.id.effectView)
         faceOverlay = findViewById(R.id.faceOverlay)
+        beautyButton = findViewById(R.id.beautyButton)
+        beautyPanel = findViewById(R.id.beautyPanel)
+        Beauty.load(this)
+        buildBeautyPanel()
+        beautyButton.setOnClickListener {
+            val show = beautyPanel.visibility != View.VISIBLE
+            beautyPanel.visibility = if (show) View.VISIBLE else View.GONE
+            if (show) {
+                beautyPanel.alpha = 0f
+                beautyPanel.translationY = dp(20).toFloat()
+                beautyPanel.animate().alpha(1f).translationY(0f).setDuration(180).start()
+            }
+            tap(it)
+        }
         effectBar = findViewById(R.id.effectBar)
         effectList = findViewById(R.id.effectList)
         effectName = findViewById(R.id.effectName)
@@ -321,6 +337,86 @@ class MainActivity : ComponentActivity() {
         else -> 0
     }
 
+    // ---------- Belleza ----------
+
+    private fun updateBeautyIcon() {
+        beautyButton.setColorFilter(if (Beauty.active) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
+    }
+
+    private fun buildBeautyPanel() {
+        beautyPanel.removeAllViews()
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = "Belleza"
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val rows = mutableListOf<Pair<android.widget.SeekBar, TextView>>()
+        header.addView(TextView(this).apply {
+            text = "Restablecer"
+            textSize = 13f
+            setTextColor(0xFF00E676.toInt())
+            setPadding(dp(8), dp(4), 0, dp(4))
+            setOnClickListener {
+                Beauty.smooth = 0f; Beauty.bright = 0f; Beauty.slim = 0f; Beauty.eyes = 0f
+                Beauty.save(this@MainActivity)
+                rows.forEach { (sb, v) -> sb.progress = 0; v.text = "0" }
+                updateBeautyIcon(); engine.refresh()
+                tap(it)
+            }
+        })
+        beautyPanel.addView(header)
+
+        fun row(label: String, get: () -> Float, set: (Float) -> Unit) {
+            val line = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dp(10), 0, 0)
+            }
+            line.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(0xE6FFFFFF.toInt())
+            }, LinearLayout.LayoutParams(dp(104), ViewGroup.LayoutParams.WRAP_CONTENT))
+            val value = TextView(this).apply {
+                textSize = 13f
+                gravity = android.view.Gravity.END
+                setTextColor(0xFF00E676.toInt())
+                text = (get() * 100).toInt().toString()
+            }
+            val bar = android.widget.SeekBar(this).apply {
+                max = 100
+                progress = (get() * 100).toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(0xFF00E676.toInt())
+                thumbTintList = android.content.res.ColorStateList.valueOf(0xFFFFFFFF.toInt())
+                progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0x55FFFFFF)
+                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: android.widget.SeekBar, p: Int, fromUser: Boolean) {
+                        if (!fromUser) return
+                        set(p / 100f)
+                        value.text = p.toString()
+                        updateBeautyIcon()
+                        engine.refresh()
+                    }
+                    override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
+                    override fun onStopTrackingTouch(sb: android.widget.SeekBar) = Beauty.save(this@MainActivity)
+                })
+            }
+            line.addView(bar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            line.addView(value, LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT))
+            beautyPanel.addView(line)
+            rows += bar to value
+        }
+        row("Suavizar piel", { Beauty.smooth }, { Beauty.smooth = it })
+        row("Iluminar", { Beauty.bright }, { Beauty.bright = it })
+        row("Afinar cara", { Beauty.slim }, { Beauty.slim = it })
+        row("Agrandar ojos", { Beauty.eyes }, { Beauty.eyes = it })
+    }
+
     // ---------- Efectos tipo TikTok ----------
 
     fun buildEffects() {
@@ -443,7 +539,7 @@ class MainActivity : ComponentActivity() {
                 bmp.recycle()
                 bmp = flipped
             }
-            val out = if (fx.isNone) bmp else EffectsEngine.renderPhoto(this, bmp, fx).also { bmp.recycle() }
+            val out = if (fx.isNone && !Beauty.active) bmp else EffectsEngine.renderPhoto(this, bmp, fx).also { bmp.recycle() }
             MotionPhotoWriter.save(this, Processing.encode(out, 94), null, "_EFECTO")
             out.recycle()
             null
@@ -493,10 +589,14 @@ class MainActivity : ComponentActivity() {
         }
         centerMode()
         updateResLabel()
+        // Llenar el ancho (anclado arriba) para que no quede un hueco a un lado
         previewView.scaleType = if (mode == Mode.VIDEO) PreviewView.ScaleType.FILL_CENTER
-        else PreviewView.ScaleType.FIT_START
+        else PreviewView.ScaleType.FILL_START
         captionPill.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
         val fxMode = mode == Mode.EFFECTS
+        beautyButton.visibility = if (fxMode) View.VISIBLE else View.GONE
+        if (!fxMode) beautyPanel.visibility = View.GONE
+        updateBeautyIcon()
         if (fxMode) {
             engine.effect = engine.effect // muestra la capa que toque
         } else {
