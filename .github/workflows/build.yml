@@ -1,0 +1,39 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk FotoAnimada-v0.1.${{ github.run_number }}.apk
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Foto Animada v0.1.${{ github.run_number }}
+          body: |
+            Compilación automática de `${{ github.sha }}`.
+            Descarga el APK de abajo e instálalo en el celular.
+          files: FotoAnimada-v0.1.${{ github.run_number }}.apk
+          make_latest: true
