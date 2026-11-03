@@ -1,0 +1,39 @@
+[
+  {"id": "none", "name": "Normal", "emoji": "🚫"},
+  {"id": "perrito", "name": "Perrito", "emoji": "🐶",
+   "stickers": [
+     {"image": "dog_ears.png", "anchor": "forehead", "width": 1.9, "offsetY": -0.15},
+     {"image": "dog_nose.png", "anchor": "nose", "width": 0.42, "offsetY": -0.04},
+     {"image": "dog_tongue.png", "anchor": "mouth", "width": 0.32, "offsetY": 0.2, "trigger": "mouthOpen"}
+   ]},
+  {"id": "gatito", "name": "Gatito", "emoji": "🐱",
+   "stickers": [
+     {"image": "cat_ears.png", "anchor": "headTop", "width": 1.25, "offsetY": 0.1},
+     {"image": "whiskers.png", "anchor": "nose", "width": 1.0, "offsetY": 0.02},
+     {"image": "blush.png", "anchor": "leftCheek", "width": 0.4},
+     {"image": "blush.png", "anchor": "rightCheek", "width": 0.4}
+   ]},
+  {"id": "lentes", "name": "Lentes", "emoji": "😎",
+   "stickers": [{"image": "glasses.png", "anchor": "eyes", "width": 1.05}]},
+  {"id": "rey", "name": "Corona", "emoji": "👑",
+   "stickers": [{"image": "crown.png", "anchor": "headTop", "width": 0.95, "offsetY": -0.12}]},
+  {"id": "bigote", "name": "Bigote", "emoji": "🥸",
+   "stickers": [{"image": "mustache.png", "anchor": "underNose", "width": 0.75}]},
+  {"id": "corazones", "name": "Ojos de corazón", "emoji": "😍",
+   "stickers": [
+     {"image": "heart.png", "anchor": "leftEye", "width": 0.42},
+     {"image": "heart.png", "anchor": "rightEye", "width": 0.42}
+   ],
+   "particles": {"image": "heart.png", "size": 0.16, "rate": 3}},
+  {"id": "ojotes", "name": "Ojos grandes", "emoji": "👀",
+   "warp": {"type": "bigEyes", "strength": 0.55}},
+  {"id": "carafina", "name": "Cara fina", "emoji": "✨",
+   "warp": {"type": "slim", "strength": 0.5},
+   "filter": "vivid"},
+  {"id": "glitch", "name": "Glitch", "emoji": "📺", "glitch": true},
+  {"id": "vhs", "name": "VHS", "emoji": "📼", "filter": "vintage", "scanlines": true, "glitch": true},
+  {"id": "espejo", "name": "Espejo", "emoji": "🪞", "mirror": true},
+  {"id": "brillitos", "name": "Brillitos", "emoji": "🌟",
+   "particles": {"image": "sparkle.png", "size": 0.12, "rate": 5},
+   "filter": "warm"}
+]

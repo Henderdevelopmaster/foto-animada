@@ -31,7 +31,7 @@
         </activity>
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="ocr,subject_segment,barcode" />
+            android:value="ocr,subject_segment,barcode,face" />
 
         <service
             android:name=".ScreenLiveService"

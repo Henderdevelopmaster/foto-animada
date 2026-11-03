@@ -73,6 +73,12 @@
             android:layout_height="match_parent"
             app:scaleType="fitStart" />
 
+        <TextureView
+            android:id="@+id/effectView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
         <com.hender.fotoanimada.GridOverlay
             android:id="@+id/gridOverlay"
             android:layout_width="match_parent"
@@ -320,6 +326,36 @@
         android:orientation="vertical"
         android:paddingBottom="36dp"
         android:paddingTop="14dp">
+
+        <HorizontalScrollView
+            android:id="@+id/effectBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/effectList"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp" />
+        </HorizontalScrollView>
+
+        <TextView
+            android:id="@+id/effectName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="6dp"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
         <HorizontalScrollView
             android:id="@+id/modeScroll"

@@ -67,7 +67,7 @@ import kotlin.math.abs
 class MainActivity : ComponentActivity() {
 
     enum class Mode(val label: String) {
-        TIMELAPSE("TIME-LAPSE"), VIDEO("VIDEO"), PHOTO("FOTO"),
+        TIMELAPSE("TIME-LAPSE"), VIDEO("VIDEO"), PHOTO("FOTO"), EFFECTS("EFECTOS"),
         PORTRAIT("RETRATO"), NIGHT("NOCHE"), INSTANT("INSTANTÁNEA")
     }
 
@@ -84,6 +84,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var captionPill: TextView
     private lateinit var modeHint: TextView
     private lateinit var qrChip: TextView
+    private lateinit var effectView: TextureView
+    private lateinit var effectBar: HorizontalScrollView
+    private lateinit var effectList: LinearLayout
+    private lateinit var effectName: TextView
+    private lateinit var engine: EffectsEngine
+    private var effects = listOf<FaceEffect>()
+    private var effectId = "perrito"
+    private var effectRecording = false
     private lateinit var toast: TextView
     private lateinit var countdown: TextView
     private lateinit var recTimer: TextView
@@ -151,6 +159,13 @@ class MainActivity : ComponentActivity() {
         captionPill = findViewById(R.id.captionPill)
         modeHint = findViewById(R.id.modeHint)
         qrChip = findViewById(R.id.qrChip)
+        effectView = findViewById(R.id.effectView)
+        effectBar = findViewById(R.id.effectBar)
+        effectList = findViewById(R.id.effectList)
+        effectName = findViewById(R.id.effectName)
+        engine = EffectsEngine(this, effectView)
+        engine.audio = audio
+        effectId = prefs.getString(KEY_EFFECT, "perrito") ?: "perrito"
         toast = findViewById(R.id.toast)
         countdown = findViewById(R.id.countdown)
         recTimer = findViewById(R.id.recTimer)
@@ -184,6 +199,7 @@ class MainActivity : ComponentActivity() {
         recorder.audio = audio
         caption = prefs.getString(KEY_CAPTION, "") ?: ""
         buildModes()
+        buildEffects()
         buildFilterChips()
         applyModeUi()
         applyTimerUi()
@@ -225,6 +241,7 @@ class MainActivity : ComponentActivity() {
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK)
                 CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
             it.animate().rotationBy(180f).setDuration(300).start()
+            engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
             bindCamera()
         }
         thumbnail.setOnClickListener {
@@ -249,6 +266,7 @@ class MainActivity : ComponentActivity() {
         main.removeCallbacks(qrScan)
         if (timelapsing) stopTimelapse()
         if (quickTaking) stopQuickTake()
+        if (effectRecording) stopEffectRec()
         bursting = false
         cancelCountdown()
         recording?.stop()
@@ -270,6 +288,10 @@ class MainActivity : ComponentActivity() {
         if (mode == m || busy || recording != null || quickTaking || timelapsing) return
         val old = mode
         mode = m
+        if (m == Mode.EFFECTS && lensFacing != CameraSelector.LENS_FACING_FRONT) {
+            lensFacing = CameraSelector.LENS_FACING_FRONT
+            if (groupOf(old) == groupOf(m)) bindCamera()
+        }
         prefs.edit().putString(KEY_MODE, m.name).apply()
         tap(modeList)
         applyModeUi()
@@ -281,7 +303,126 @@ class MainActivity : ComponentActivity() {
         Mode.VIDEO -> 1
         Mode.NIGHT -> 2
         Mode.PORTRAIT -> 3
+        Mode.EFFECTS -> 4
         else -> 0
+    }
+
+    // ---------- Efectos tipo TikTok ----------
+
+    fun buildEffects() {
+        effects = EffectStore.all(this)
+        effectList.removeAllViews()
+        val size = dp(52)
+        for (fx in effects) {
+            val tv = TextView(this).apply {
+                text = fx.emoji
+                textSize = 24f
+                gravity = android.view.Gravity.CENTER
+                setBackgroundResource(R.drawable.bg_effect)
+                tag = fx.id
+                setOnClickListener { selectEffect(fx.id, true) }
+            }
+            val lp = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
+            effectList.addView(tv, lp)
+        }
+        selectEffect(effectId, false)
+    }
+
+    private fun selectEffect(id: String, user: Boolean) {
+        val fx = effects.firstOrNull { it.id == id } ?: effects.firstOrNull() ?: return
+        effectId = fx.id
+        prefs.edit().putString(KEY_EFFECT, fx.id).apply()
+        engine.effect = fx
+        for (i in 0 until effectList.childCount) {
+            val v = effectList.getChildAt(i)
+            v.isSelected = v.tag == fx.id
+            v.scaleX = if (v.isSelected) 1.15f else 1f
+            v.scaleY = v.scaleX
+        }
+        effectName.text = fx.name
+        if (user) {
+            tap(effectList)
+            val v = effectList.findViewWithTag<View>(fx.id)
+            v?.let { effectBar.smoothScrollTo(it.left - effectBar.width / 2 + it.width / 2, 0) }
+        }
+    }
+
+    private val effectTick = object : Runnable {
+        override fun run() {
+            if (!effectRecording) return
+            val secs = ((System.currentTimeMillis() - quickStart) / 1000).toInt()
+            recTimer.text = String.format(Locale.US, "%d:%02d", secs / 60, secs % 60)
+            if (secs >= MAX_QUICKTAKE_S) {
+                stopEffectRec(); return
+            }
+            main.postDelayed(this, 250)
+        }
+    }
+
+    private fun startEffectRec() {
+        effectRecording = true
+        busy = true
+        quickStart = System.currentTimeMillis()
+        audio.keepUs = (MAX_QUICKTAKE_S + 5) * 1_000_000L
+        updateAudio()
+        engine.startRecording()
+        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        shutter.setBackgroundResource(R.drawable.shutter_rec)
+        recTimer.visibility = View.VISIBLE
+        recTimer.text = "0:00"
+        main.post(effectTick)
+    }
+
+    private fun stopEffectRec() {
+        if (!effectRecording) return
+        effectRecording = false
+        main.removeCallbacks(effectTick)
+        sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        recTimer.visibility = View.GONE
+        shutter.setBackgroundResource(R.drawable.shutter)
+        showToast("Guardando video…")
+        engine.stopRecording { clip ->
+            ioExecutor.execute {
+                var msg: String? = null
+                try {
+                    if (clip == null) msg = "No se pudo grabar el video"
+                    else Exporter.saveVideoBytes(this, MotionPhotoWriter.muxToMp4(clip, cacheDir).bytes, "_EFECTO")
+                } catch (e: Throwable) {
+                    msg = "Error: ${e.message}"
+                }
+                runOnUiThread {
+                    audio.keepUs = 6_000_000
+                    updateAudio()
+                }
+                finishSave(msg)
+            }
+        }
+    }
+
+    private fun saveEffectPhoto(photo: ByteArray?, front: Boolean) {
+        val fx = engine.effect
+        if (photo == null || fx == null) {
+            finishSave(if (photo == null) "No se pudo tomar la foto" else null)
+            return
+        }
+        val msg = try {
+            var bmp = Processing.decode(photo, 2400)
+            if (front) {
+                val m = android.graphics.Matrix().apply { postScale(-1f, 1f) }
+                val flipped = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+                bmp.recycle()
+                bmp = flipped
+            }
+            val out = if (fx.isNone) bmp else EffectsEngine.renderPhoto(this, bmp, fx).also { bmp.recycle() }
+            MotionPhotoWriter.save(this, Processing.encode(out, 94), null, "_EFECTO")
+            out.recycle()
+            null
+        } catch (e: Throwable) {
+            Log.e(TAG, "Foto con efecto", e)
+            "Error: ${e.message}"
+        }
+        finishSave(msg)
     }
 
     private fun buildModes() {
@@ -325,6 +466,12 @@ class MainActivity : ComponentActivity() {
         previewView.scaleType = if (mode == Mode.VIDEO) PreviewView.ScaleType.FILL_CENTER
         else PreviewView.ScaleType.FIT_START
         captionPill.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
+        val fxMode = mode == Mode.EFFECTS
+        effectView.visibility = if (fxMode) View.VISIBLE else View.GONE
+        previewView.alpha = if (fxMode) 0f else 1f
+        effectBar.visibility = if (fxMode) View.VISIBLE else View.GONE
+        effectName.visibility = if (fxMode) View.VISIBLE else View.GONE
+        engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
         captionPill.text = caption.ifBlank { "Toca para escribir algo" }
         qrChip.visibility = View.GONE
         val hint = when (mode) {
@@ -332,6 +479,7 @@ class MainActivity : ComponentActivity() {
             Mode.NIGHT -> "Mantén el cel quieto al disparar"
             Mode.TIMELAPSE -> "Toca para empezar y para terminar"
             Mode.INSTANT -> "Toca para foto · mantén para video"
+            Mode.EFFECTS -> "Elige un efecto · mantén para grabar"
             else -> null
         }
         modeHint.text = hint
@@ -341,7 +489,7 @@ class MainActivity : ComponentActivity() {
 
         liveToggle.visibility = if (mode == Mode.PHOTO) View.VISIBLE else View.INVISIBLE
         liveToggle.setImageResource(if (liveOn) R.drawable.ic_live_on else R.drawable.ic_live_off)
-        val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE
+        val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE || mode == Mode.EFFECTS
         filterButton.visibility = if (noFilter) View.INVISIBLE else View.VISIBLE
         if (noFilter) filterBar.visibility = View.GONE
         shutter.setBackgroundResource(
@@ -429,7 +577,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateAudio() {
-        val want = (liveActive || quickTaking) && has(Manifest.permission.RECORD_AUDIO)
+        val want = (liveActive || quickTaking || effectRecording) && has(Manifest.permission.RECORD_AUDIO)
         if (want) audio.start() else audio.stop()
     }
 
@@ -508,6 +656,9 @@ class MainActivity : ComponentActivity() {
             if ((mode == Mode.PHOTO || mode == Mode.INSTANT) && !busy) {
                 longStarted = true
                 startQuickTake()
+            } else if (mode == Mode.EFFECTS && !busy) {
+                longStarted = true
+                startEffectRec()
             }
         }
         shutter.setOnTouchListener { v, ev ->
@@ -516,7 +667,7 @@ class MainActivity : ComponentActivity() {
                     downX = ev.rawX
                     longStarted = false
                     v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start()
-                    if ((mode == Mode.PHOTO || mode == Mode.INSTANT) && timerSecs == 0) main.postDelayed(longPress, 400)
+                    if ((mode == Mode.PHOTO || mode == Mode.INSTANT || mode == Mode.EFFECTS) && timerSecs == 0) main.postDelayed(longPress, 400)
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ev.rawX - downX
@@ -530,6 +681,7 @@ class MainActivity : ComponentActivity() {
                     v.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
                     when {
                         quickTaking -> stopQuickTake()
+                        effectRecording -> stopEffectRec()
                         bursting -> stopBurst()
                         longStarted -> {}
                         ev.actionMasked == MotionEvent.ACTION_UP -> onShutterTap()
@@ -763,6 +915,7 @@ class MainActivity : ComponentActivity() {
             Mode.VIDEO -> buildVideoGroup()
             Mode.NIGHT -> buildPhotoGroup(night = true, analysis = false)
             Mode.PORTRAIT -> buildPhotoGroup(night = false, analysis = false)
+            Mode.EFFECTS -> buildEffectsGroup()
             else -> buildPhotoGroup(night = false, analysis = true)
         }
         try {
@@ -849,6 +1002,38 @@ class MainActivity : ComponentActivity() {
         null
     }
 
+    private fun buildEffectsGroup(): UseCaseGroup {
+        videoCapture = null
+        val ratio43 = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .build()
+        val capture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setResolutionSelector(ratio43)
+            .build()
+        imageCapture = capture
+        val analysis = ImageAnalysis.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(Size(960, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    )
+                    .build()
+            )
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+            .build()
+            .also { it.setAnalyzer(effectsExecutor, engine) }
+        return UseCaseGroup.Builder()
+            .setViewPort(ViewPort.Builder(Rational(3, 4), Surface.ROTATION_0).build())
+            .addUseCase(capture)
+            .addUseCase(analysis)
+            .build()
+    }
+
+    private val effectsExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
     private fun buildVideoGroup(): UseCaseGroup {
         imageCapture = null
         val ratio169 = ResolutionSelector.Builder()
@@ -884,6 +1069,7 @@ class MainActivity : ComponentActivity() {
 
         val live = liveActive
         val currentMode = mode
+        val front = lensFacing == CameraSelector.LENS_FACING_FRONT
         if (mode == Mode.PORTRAIT || mode == Mode.NIGHT) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
         if (live) {
@@ -906,6 +1092,7 @@ class MainActivity : ComponentActivity() {
                 when (currentMode) {
                     Mode.INSTANT -> saveInstant(p, currentFilter)
                     Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") { Processing.portrait(it, currentFilter) }
+                    Mode.EFFECTS -> saveEffectPhoto(p, front)
                     Mode.NIGHT -> saveProcessed(p, "_NOCHE") { Processing.night(it, currentFilter) }
                     else -> saveResult(p, c, live, currentFilter)
                 }
@@ -921,8 +1108,9 @@ class MainActivity : ComponentActivity() {
         }
 
         val photoFile = File(cacheDir, "photo.jpg")
+        val meta = ImageCapture.Metadata().apply { isReversedHorizontal = false }
         ic.takePicture(
-            ImageCapture.OutputFileOptions.Builder(photoFile).build(),
+            ImageCapture.OutputFileOptions.Builder(photoFile).setMetadata(meta).build(),
             ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
@@ -1216,6 +1404,8 @@ class MainActivity : ComponentActivity() {
         audio.stop()
         sound.release()
         analysisExecutor.execute { recorder.release() }
+        effectsExecutor.execute { engine.release() }
+        effectsExecutor.shutdown()
         analysisExecutor.shutdown()
         ioExecutor.shutdown()
     }
@@ -1228,6 +1418,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_TIMER = "timer"
         private const val KEY_GRID = "grid"
         private const val KEY_CAPTION = "caption"
+        private const val KEY_EFFECT = "effect"
         private const val MAX_QUICKTAKE_S = 60
     }
 }
