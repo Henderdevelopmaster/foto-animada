@@ -232,8 +232,9 @@ class MainActivity : ComponentActivity() {
         }
         developOverlay.setOnClickListener { }
 
-        val needed = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-        if (needed.all { has(it) }) startCamera() else permissionLauncher.launch(needed)
+        val needed = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        if (android.os.Build.VERSION.SDK_INT >= 33) needed += Manifest.permission.POST_NOTIFICATIONS
+        if (needed.all { has(it) }) startCamera() else permissionLauncher.launch(needed.toTypedArray())
     }
 
     override fun onResume() {
