@@ -64,6 +64,13 @@
             android:visibility="gone" />
     </FrameLayout>
 
+    <!-- Aro de luz de la cámara frontal (linterna adelante) -->
+    <com.hender.fotoanimada.FlashView
+        android:id="@+id/ringLight"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/chrome"
         android:layout_width="match_parent"
@@ -538,7 +545,7 @@
     </LinearLayout>
 
     <!-- Flash de pantalla (cámara frontal) -->
-    <View
+    <com.hender.fotoanimada.FlashView
         android:id="@+id/screenFlash"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

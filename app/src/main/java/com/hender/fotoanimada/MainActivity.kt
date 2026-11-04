@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.RectF
 import android.media.MediaActionSound
 import android.os.Bundle
 import android.os.Handler
@@ -128,7 +129,9 @@ class MainActivity : ComponentActivity() {
     private var instantTab = 0
     private var boomKind = "photo" // photo, normal, slow, echo
     private lateinit var flashButton: ImageButton
-    private lateinit var screenFlash: View
+    private lateinit var screenFlash: FlashView
+    private lateinit var ringLight: FlashView
+    private var flashShape = "full"
     private var flashMode = "off" // off, auto, on, torch
     private var flashColor = 0xFFFFFFFF.toInt()
 
@@ -254,6 +257,8 @@ class MainActivity : ComponentActivity() {
         boomButton.setOnClickListener { showBoomMenu() }
         flashButton = findViewById(R.id.flashButton)
         screenFlash = findViewById(R.id.screenFlash)
+        ringLight = findViewById(R.id.ringLight)
+        flashShape = prefs.getString(KEY_FLASH_SHAPE, "full") ?: "full"
         flashMode = prefs.getString(KEY_FLASH, "off") ?: "off"
         flashColor = prefs.getInt(KEY_FLASH_COLOR, 0xFFFFFFFF.toInt())
         flashButton.setOnClickListener { showFlashMenu() }
@@ -264,6 +269,7 @@ class MainActivity : ComponentActivity() {
         previewView.previewStreamState.observe(this) { state ->
             if (state == PreviewView.StreamState.STREAMING) {
                 applyPreviewFilter()
+                applyFlash() // la linterna solo prende con la cámara ya activa
                 // El cambio de modo/cámara termina con un desvanecido suave (tipo iPhone)
                 main.postDelayed({ unfreezePreview() }, 120)
             }
@@ -363,6 +369,7 @@ class MainActivity : ComponentActivity() {
         if (effectRecording) stopEffectRec()
         bursting = false
         stopReveal()
+        ringLight.visibility = View.GONE
         cancelCountdown()
         recording?.stop()
         audio.stop()
@@ -1764,7 +1771,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showScreenFlash() {
-        screenFlash.setBackgroundColor(flashColor)
+        screenFlash.color = flashColor
+        screenFlash.shape = flashShape
         screenFlash.alpha = 1f
         screenFlash.visibility = View.VISIBLE
         window.attributes = window.attributes.apply { screenBrightness = 1f }
@@ -1773,7 +1781,7 @@ class MainActivity : ComponentActivity() {
     private fun hideScreenFlash() {
         screenFlash.animate().alpha(0f).setDuration(200).withEndAction {
             screenFlash.visibility = View.GONE
-            window.attributes = window.attributes.apply {
+            if (ringLight.visibility != View.VISIBLE) window.attributes = window.attributes.apply {
                 screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             }
         }.start()
@@ -2111,8 +2119,26 @@ class MainActivity : ComponentActivity() {
         }
         val torch = back && (flashMode == "torch" || (flashMode == "on" && mode == Mode.VIDEO))
         try {
-            camera?.cameraControl?.enableTorch(torch)
+            if (camera?.cameraInfo?.hasFlashUnit() == true) camera?.cameraControl?.enableTorch(torch)
         } catch (_: Exception) {
+        }
+        // Adelante no hay LED: la "linterna" es un aro de luz en la pantalla
+        val ring = !back && flashMode == "torch"
+        if (ring) {
+            ringLight.color = flashColor
+            val l = previewBox.left.toFloat()
+            val t = previewBox.top.toFloat()
+            val bw = previewBox.width.toFloat()
+            val bh = previewBox.height.toFloat()
+            val inset = bw * 0.12f
+            ringLight.hole = RectF(l + inset, t + inset, l + bw - inset, t + bh - inset * 1.4f)
+            ringLight.visibility = View.VISIBLE
+            window.attributes = window.attributes.apply { screenBrightness = 1f }
+        } else if (ringLight.visibility == View.VISIBLE) {
+            ringLight.visibility = View.GONE
+            window.attributes = window.attributes.apply {
+                screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
         }
         updateFlashIcon()
     }
@@ -2124,34 +2150,58 @@ class MainActivity : ComponentActivity() {
             Triple("on", "Encendido", R.drawable.ic_flash_on),
             Triple("torch", "Linterna (luz fija)", R.drawable.ic_flash_torch),
         )
-        val colors = listOf(
-            "Blanco" to 0xFFFFFFFF.toInt(), "Cálido" to 0xFFFFE2B8.toInt(), "Rosa" to 0xFFFF9EC7.toInt(),
-            "Morado" to 0xFFC9A2FF.toInt(), "Azul" to 0xFF9CCBFF.toInt(), "Verde" to 0xFFB4F5C2.toInt(),
-            "Atardecer" to 0xFFFFB27A.toInt(),
-        )
         val items = modes.map { (id, label, icon) ->
             Sheet.Item(label, icon, checked = flashMode == id) {
                 flashMode = id
                 prefs.edit().putString(KEY_FLASH, id).apply()
                 applyFlash()
+                if (id == "torch" && front) showToast("Adelante la linterna es un aro de luz en la pantalla")
             }
-        } + colors.map { (label, color) ->
-            Sheet.Item("Pantalla $label", R.drawable.ic_flash_on, checked = flashColor == color,
-                subtitle = "Flash de la cámara frontal") {
+        } + listOf(
+            Sheet.Item("Color del flash de pantalla", R.drawable.ic_filters, subtitle = "Cámara frontal") { showFlashColors() },
+            Sheet.Item("Forma del flash", R.drawable.ic_flash_on, subtitle = "Se refleja en tus ojos") { showFlashShapes() },
+        )
+        Sheet.actions(this, "Flash", items,
+            subtitle = if (front) "Adelante la pantalla hace de flash" else "Atrás usa el flash del cel")
+    }
+
+    private fun previewFlash() {
+        if (flashMode == "off") {
+            flashMode = "on"
+            prefs.edit().putString(KEY_FLASH, "on").apply()
+        }
+        applyFlash()
+        showScreenFlash()
+        main.postDelayed({ hideScreenFlash() }, 450)
+    }
+
+    private fun showFlashColors() {
+        val colors = listOf(
+            "Blanco" to 0xFFFFFFFF.toInt(), "Cálido" to 0xFFFFE2B8.toInt(), "Rosa" to 0xFFFF9EC7.toInt(),
+            "Morado" to 0xFFC9A2FF.toInt(), "Azul" to 0xFF9CCBFF.toInt(), "Verde" to 0xFFB4F5C2.toInt(),
+            "Atardecer" to 0xFFFFB27A.toInt(),
+        )
+        Sheet.actions(this, "Color del flash", colors.map { (label, color) ->
+            Sheet.Item(label, R.drawable.ic_flash_on, checked = flashColor == color) {
                 flashColor = color
                 prefs.edit().putInt(KEY_FLASH_COLOR, color).apply()
-                if (flashMode == "off") {
-                    flashMode = "on"
-                    prefs.edit().putString(KEY_FLASH, "on").apply()
-                }
-                applyFlash()
-                // Probadita del color
-                showScreenFlash()
-                main.postDelayed({ hideScreenFlash() }, 350)
+                previewFlash()
             }
-        }
-        Sheet.actions(this, "Flash", items,
-            subtitle = if (front) "Adelante la pantalla hace de flash, del color que elijas" else "Atrás usa el flash del cel")
+        })
+    }
+
+    private fun showFlashShapes() {
+        val shapes = listOf(
+            "full" to "Pantalla completa", "ring" to "Aro (brillo redondo en los ojos)",
+            "circle" to "Círculo", "heart" to "Corazón", "star" to "Estrella",
+        )
+        Sheet.actions(this, "Forma del flash", shapes.map { (id, label) ->
+            Sheet.Item(label, R.drawable.ic_flash_on, checked = flashShape == id) {
+                flashShape = id
+                prefs.edit().putString(KEY_FLASH_SHAPE, id).apply()
+                previewFlash()
+            }
+        }, subtitle = "La forma se refleja como brillito en los ojos")
     }
 
     private fun showBoomMenu() {
@@ -2510,6 +2560,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_BOOM = "instant_boom"
         private const val KEY_FLASH = "flash_mode"
         private const val KEY_FLASH_COLOR = "flash_color"
+        private const val KEY_FLASH_SHAPE = "flash_shape"
         private const val MAX_QUICKTAKE_S = 60
     }
 }
