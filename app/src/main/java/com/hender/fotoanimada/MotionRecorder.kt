@@ -76,9 +76,25 @@ class MotionRecorder(
     private var shutterPtsUs = -1L
 
     /** Pide un clip. El callback llega en el hilo del analizador. */
-    fun requestClip(onReady: (Clip?) -> Unit) {
+    // Momento exacto en que la cámara expuso la foto (llega un poco después del toque)
+    private val shutterMark = java.util.concurrent.atomic.AtomicLong(-1)
+    @Volatile
+    private var waitMarkNext = false
+    private var waitingMark = false
+    private var requestAtPts = 0L
+
+    /**
+     * Pide un clip. Si waitForMark = true, el centro del clip será el instante que llegue
+     * por markShutter() (cuando la cámara realmente toma la foto), no el momento del toque.
+     */
+    fun requestClip(waitForMark: Boolean = false, onReady: (Clip?) -> Unit) {
+        shutterMark.set(-1)
+        waitMarkNext = waitForMark
         pending.getAndSet(onReady)?.invoke(null)
     }
+
+    /** La cámara empezó a exponer la foto ahora (reloj System.nanoTime / 1000). */
+    fun markShutter(ptsUs: Long) = shutterMark.set(ptsUs)
 
     override fun analyze(image: ImageProxy) {
         try {
@@ -154,7 +170,8 @@ class MotionRecorder(
             setInteger(MediaFormat.KEY_BIT_RATE, 10_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, 30)
             // Un keyframe por segundo para poder cortar el buffer limpio
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            // Keyframe cada medio segundo: el clip puede empezar justo 1.5 s antes de la foto
+            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.5f)
         }
         val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         c.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -246,11 +263,23 @@ class MotionRecorder(
             } else {
                 activeRequest = req
                 shutterPtsUs = buffer.lastOrNull()?.ptsUs ?: -1L
+                requestAtPts = shutterPtsUs
+                waitingMark = waitMarkNext
             }
         }
         val req = activeRequest ?: return
         val latest = buffer.lastOrNull()?.ptsUs ?: return
-        if (shutterPtsUs < 0) shutterPtsUs = latest
+        if (shutterPtsUs < 0) {
+            shutterPtsUs = latest
+            requestAtPts = latest
+        }
+        val mark = shutterMark.get()
+        if (mark > 0 && waitingMark) {
+            shutterPtsUs = mark
+            waitingMark = false
+        }
+        // Esperar a saber cuándo se tomó la foto (máximo 1.5 s)
+        if (waitingMark && latest - requestAtPts < 1_500_000) return
         if (latest >= shutterPtsUs + postUs) {
             val fmt = outFormat
             val samples = buffer.toList()

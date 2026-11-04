@@ -33,7 +33,9 @@ object MotionPhotoWriter {
     class Mp4(val bytes: ByteArray, val presentationUs: Long)
 
     fun muxToMp4(clip: MotionRecorder.Clip, cacheDir: File): Mp4 {
-        val start = clip.samples.indexOfFirst { it.isKey }
+        // Empezar en el keyframe más cercano a 1.5 s antes de la foto (como iPhone)
+        var start = clip.samples.indexOfLast { it.isKey && it.ptsUs <= clip.keyPtsUs - 1_500_000 }
+        if (start < 0) start = clip.samples.indexOfFirst { it.isKey }
         require(start >= 0) { "El clip no tiene keyframes" }
         val samples = clip.samples.subList(start, clip.samples.size)
         val base = samples.first().ptsUs

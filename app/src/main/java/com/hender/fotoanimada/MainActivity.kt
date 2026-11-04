@@ -1440,7 +1440,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (live) {
-            recorder.requestClip { result ->
+            recorder.requestClip(waitForMark = true) { result ->
                 synchronized(lock) { clip = result }
                 runOnUiThread { livePill.animate().alpha(0f).setDuration(200).start() }
                 finishOne()
@@ -1453,6 +1453,11 @@ class MainActivity : ComponentActivity() {
             ImageCapture.OutputFileOptions.Builder(photoFile).setMetadata(meta).build(),
             ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
+                override fun onCaptureStarted() {
+                    // Instante real de la foto: el Live queda centrado aquí
+                    if (live) recorder.markShutter(System.nanoTime() / 1000)
+                }
+
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val bytes = photoFile.readBytes()
                     photoFile.delete()

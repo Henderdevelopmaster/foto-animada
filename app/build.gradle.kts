@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.hender.fotoanimada"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.hender.fotoanimada"
@@ -41,7 +41,7 @@ android {
 }
 
 dependencies {
-    val camerax = "1.3.4"
+    val camerax = "1.4.1"
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
