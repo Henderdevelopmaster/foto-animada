@@ -37,9 +37,37 @@ data class Sticker(
     val offsetX: Float,
     val offsetY: Float,
     val trigger: String,
+    /** Animación: none, bob, spin, pulse, sway, blink */
+    val anim: String = "none",
+    val animAmount: Float = 0.1f,
+    val animSpeed: Float = 1f,
 )
 
-data class Particles(val image: String, val size: Float, val rate: Float)
+/**
+ * Partículas. mode:
+ *  face  = salen alrededor de la cara y suben
+ *  rise  = suben desde abajo de la pantalla
+ *  fall  = caen desde arriba (nieve, confeti, pétalos)
+ *  orbit = giran alrededor de la cabeza
+ */
+data class Particles(
+    val images: List<String>,
+    val size: Float,
+    val rate: Float,
+    val mode: String = "face",
+    val spin: Float = 0f,
+    val count: Int = 6,
+)
+
+/** Capa de pantalla completa: imagen (marco), degradado, fecha de cámara o REC. */
+data class Overlay(
+    val type: String,          // image, tint, date, rec
+    val image: String? = null,
+    val fit: String = "cover", // cover, top, bottom, center
+    val alpha: Float = 1f,
+    val colors: List<Int> = emptyList(),
+    val color: Int = 0xFFFF8A00.toInt(),
+)
 
 data class FaceEffect(
     val id: String,
@@ -56,11 +84,29 @@ data class FaceEffect(
     val particles: Particles?,
     /** Carpeta de donde salen las imágenes: "asset:effects" o una ruta de archivos. */
     val base: String,
+    val colorMatrix: FloatArray? = null,
+    val overlays: List<Overlay> = emptyList(),
+    val category: String = "",
+    val custom: Boolean = false,
 ) {
     val isNone get() = stickers.isEmpty() && warp == null && filter == PhotoFilter.ORIGINAL &&
-        !glitch && !scanlines && !mirror && particles == null
+        !glitch && !scanlines && !mirror && particles == null && colorMatrix == null && overlays.isEmpty()
+
+    /** Color total del efecto (filtro + matriz propia). null = sin cambio. */
+    fun matrix(): ColorMatrix? {
+        if (filter == PhotoFilter.ORIGINAL && colorMatrix == null) return null
+        val m = filter.matrix()
+        colorMatrix?.let { m.postConcat(ColorMatrix(it)) }
+        return m
+    }
 
     companion object {
+        private fun color(s: String): Int = try {
+            android.graphics.Color.parseColor(s)
+        } catch (_: Exception) {
+            0
+        }
+
         fun parse(o: JSONObject, base: String): FaceEffect {
             val st = mutableListOf<Sticker>()
             o.optJSONArray("stickers")?.let { arr ->
@@ -71,11 +117,32 @@ data class FaceEffect(
                         s.optDouble("width", 1.0).toFloat(),
                         s.optDouble("offsetX", 0.0).toFloat(), s.optDouble("offsetY", 0.0).toFloat(),
                         s.optString("trigger", "always"),
+                        s.optString("anim", "none"),
+                        s.optDouble("animAmount", 0.1).toFloat(),
+                        s.optDouble("animSpeed", 1.0).toFloat(),
                     )
                 }
             }
             val warp = o.optJSONObject("warp")
             val p = o.optJSONObject("particles")
+            val cm = o.optJSONArray("colorMatrix")?.let { a ->
+                if (a.length() == 20) FloatArray(20) { a.getDouble(it).toFloat() } else null
+            }
+            val overlays = mutableListOf<Overlay>()
+            o.optJSONArray("overlays")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val v = arr.getJSONObject(i)
+                    val cols = v.optJSONArray("colors")?.let { c -> (0 until c.length()).map { color(c.getString(it)) } } ?: emptyList()
+                    overlays += Overlay(
+                        v.optString("type", "image"),
+                        v.optString("image").ifBlank { null },
+                        v.optString("fit", "cover"),
+                        v.optDouble("alpha", 1.0).toFloat(),
+                        cols,
+                        v.optString("color").ifBlank { null }?.let { color(it) } ?: 0xFFFF8A00.toInt(),
+                    )
+                }
+            }
             return FaceEffect(
                 id = o.getString("id"),
                 name = o.optString("name", o.getString("id")),
@@ -89,9 +156,18 @@ data class FaceEffect(
                 scanlines = o.optBoolean("scanlines"),
                 mirror = o.optBoolean("mirror"),
                 particles = p?.let {
-                    Particles(it.getString("image"), it.optDouble("size", 0.15).toFloat(), it.optDouble("rate", 3.0).toFloat())
+                    val imgs = it.optJSONArray("images")?.let { a -> (0 until a.length()).map { i -> a.getString(i) } }
+                        ?: listOf(it.getString("image"))
+                    Particles(
+                        imgs, it.optDouble("size", 0.15).toFloat(), it.optDouble("rate", 3.0).toFloat(),
+                        it.optString("mode", "face"), it.optDouble("spin", 0.0).toFloat(), it.optInt("count", 6),
+                    )
                 },
                 base = base,
+                colorMatrix = cm,
+                overlays = overlays,
+                category = o.optString("category", ""),
+                custom = o.optBoolean("custom"),
             )
         }
     }
@@ -99,7 +175,7 @@ data class FaceEffect(
 
 object EffectStore {
 
-    /** Efectos que trae la app + los descargados de la biblioteca. */
+    /** Efectos que trae la app + los descargados de la biblioteca + los creados por ti. */
     fun all(context: Context): List<FaceEffect> {
         val list = mutableListOf<FaceEffect>()
         try {
@@ -107,7 +183,9 @@ object EffectStore {
             for (i in 0 until arr.length()) list += FaceEffect.parse(arr.getJSONObject(i), "asset:effects")
         } catch (_: Exception) {
         }
-        list += downloaded(context)
+        val extra = downloaded(context)
+        list += extra.filter { it.custom }.sortedByDescending { it.id }
+        list += extra.filter { !it.custom }
         return list
     }
 
@@ -120,7 +198,7 @@ object EffectStore {
             } catch (_: Exception) {
                 null
             }
-        }?.sortedBy { it.name } ?: emptyList()
+        }?.sortedWith(compareBy({ it.category }, { it.name })) ?: emptyList()
 
     private val cache = HashMap<String, Bitmap?>()
 
@@ -137,6 +215,10 @@ object EffectStore {
                 null
             }
         }
+    }
+
+    fun forget(base: String) = synchronized(cache) {
+        cache.keys.filter { it.startsWith("$base/") }.forEach { cache.remove(it) }
     }
 }
 
@@ -244,7 +326,10 @@ class FaceGeom(
 /** Dibuja un efecto sobre una imagen (vista previa, video o foto final). */
 class EffectRenderer(private val context: Context) {
 
-    private class Particle(var x: Float, var y: Float, var vx: Float, var vy: Float, var life: Float, val size: Float, val rot: Float)
+    private class Particle(
+        var x: Float, var y: Float, var vx: Float, var vy: Float, var life: Float,
+        val size: Float, var rot: Float, val img: Int = 0, val vr: Float = 0f, var phase: Float = 0f,
+    )
 
     private val particles = mutableListOf<Particle>()
     private var lastMs = 0L
@@ -297,15 +382,27 @@ class EffectRenderer(private val context: Context) {
         if (effect.glitch) drawGlitch(canvas, frame, nowMs, sx, sy)
         if (effect.scanlines) drawScanlines(canvas, outW, outH)
 
-        drawOverlay(canvas, faces, effect, nowMs, sx, sy)
+        drawOverlay(canvas, faces, effect, nowMs, sx, sy, frame.width, frame.height)
     }
 
-    /** Solo stickers y partículas (para pintar encima de la vista previa normal). */
-    fun drawOverlay(canvas: Canvas, faces: List<FaceGeom>, effect: FaceEffect, nowMs: Long, sx: Float, sy: Float) {
+    /**
+     * Todo lo que va encima de la imagen: tintes, stickers, partículas y capas de pantalla.
+     * Se usa sobre la vista previa normal y también al dibujar el cuadro completo.
+     */
+    fun drawOverlay(
+        canvas: Canvas, faces: List<FaceGeom>, effect: FaceEffect, nowMs: Long,
+        sx: Float, sy: Float, imgW: Int, imgH: Int,
+    ) {
         paint.colorFilter = null
         paint.alpha = 255
         val face = faces.firstOrNull()
-        // 2) Stickers en cada cara
+        val outW = imgW * sx
+        val outH = imgH * sy
+        val t = (nowMs % 1_000_000L) / 1000f
+
+        for (ov in effect.overlays) if (ov.type == "tint") drawTint(canvas, ov, outW, outH)
+
+        // Stickers en cada cara
         for (f in faces) {
             for (st in effect.stickers) {
                 if (st.trigger == "mouthOpen" && f.mouthOpen < 0.07f) continue
@@ -314,22 +411,151 @@ class EffectRenderer(private val context: Context) {
                 val a = f.anchor(st.anchor)
                 val c = cos(f.angle)
                 val sn = sin(f.angle)
-                val ox = (st.offsetX * c - st.offsetY * sn) * f.faceWidth
-                val oy = (st.offsetX * sn + st.offsetY * c) * f.faceWidth
-                val wPx = st.width * f.faceWidth * sx
-                val k = wPx / bmp.width
+                var extraY = 0f
+                var rot = Math.toDegrees(f.angle.toDouble()).toFloat()
+                var scale = 1f
+                var alpha = 255
+                val wave = sin(t * st.animSpeed * 2f * Math.PI.toFloat())
+                when (st.anim) {
+                    "bob" -> extraY = wave * st.animAmount
+                    "spin" -> rot += (t * st.animSpeed * 360f) % 360f
+                    "pulse" -> scale = 1f + wave * st.animAmount
+                    "sway" -> rot += wave * st.animAmount * 100f
+                    "blink" -> alpha = if ((t * st.animSpeed) % 1f < 0.55f) 255 else 40
+                }
+                val offY = st.offsetY + extraY
+                val ox = (st.offsetX * c - offY * sn) * f.faceWidth
+                val oy = (st.offsetX * sn + offY * c) * f.faceWidth
+                val k = st.width * f.faceWidth * sx * scale / bmp.width
                 matrix.reset()
                 matrix.postTranslate(-bmp.width / 2f, -bmp.height / 2f)
                 matrix.postScale(k, k)
-                matrix.postRotate(Math.toDegrees(f.angle.toDouble()).toFloat())
+                matrix.postRotate(rot)
                 matrix.postTranslate((a.x + ox) * sx, (a.y + oy) * sy)
+                paint.alpha = alpha
                 canvas.drawBitmap(bmp, matrix, paint)
             }
         }
+        paint.alpha = 255
 
-        // 3) Partículas que flotan alrededor de la cara
-        effect.particles?.let { p -> drawParticles(canvas, p, effect, face, nowMs, sx, sy) }
+        effect.particles?.let { p -> drawParticles(canvas, p, effect, face, nowMs, sx, sy, imgW, imgH) }
+
+        for (ov in effect.overlays) {
+            when (ov.type) {
+                "image" -> drawImageOverlay(canvas, effect, ov, outW, outH)
+                "date" -> drawDate(canvas, ov, outW, outH)
+                "rec" -> drawRec(canvas, outW, outH, nowMs)
+            }
+        }
         lastMs = nowMs
+    }
+
+    /** ¿Hay algo que se mueva solo? (para seguir redibujando). */
+    fun animated(e: FaceEffect) = e.particles != null || e.stickers.any { it.anim != "none" } ||
+        e.overlays.any { it.type == "rec" }
+
+    private val ovPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+
+    private fun drawTint(canvas: Canvas, ov: Overlay, w: Float, h: Float) {
+        if (ov.colors.isEmpty()) return
+        ovPaint.shader = if (ov.colors.size == 1) null else android.graphics.LinearGradient(
+            0f, 0f, 0f, h, ov.colors.toIntArray(), null, android.graphics.Shader.TileMode.CLAMP
+        )
+        ovPaint.color = if (ov.colors.size == 1) ov.colors[0] else Color.WHITE
+        ovPaint.alpha = (255 * ov.alpha).toInt()
+        canvas.drawRect(0f, 0f, w, h, ovPaint)
+        ovPaint.shader = null
+        ovPaint.alpha = 255
+    }
+
+    private fun drawImageOverlay(canvas: Canvas, effect: FaceEffect, ov: Overlay, w: Float, h: Float) {
+        val bmp = EffectStore.image(context, effect.base, ov.image ?: return) ?: return
+        val bw = bmp.width.toFloat()
+        val bh = bmp.height.toFloat()
+        val (scale, x, y) = when (ov.fit) {
+            "top" -> Triple(w / bw, 0f, 0f)
+            "bottom" -> Triple(w / bw, 0f, h - bh * (w / bw))
+            "center" -> {
+                val k = min(w / bw, h / bh) * 0.9f
+                Triple(k, (w - bw * k) / 2, (h - bh * k) / 2)
+            }
+            "stretch" -> Triple(-1f, 0f, 0f)
+            else -> {
+                val k = max(w / bw, h / bh)
+                Triple(k, (w - bw * k) / 2, (h - bh * k) / 2)
+            }
+        }
+        ovPaint.alpha = (255 * ov.alpha).toInt()
+        if (scale < 0f) {
+            canvas.drawBitmap(bmp, null, android.graphics.RectF(0f, 0f, w, h), ovPaint)
+        } else {
+            matrix.reset()
+            matrix.postScale(scale, scale)
+            matrix.postTranslate(x, y)
+            canvas.drawBitmap(bmp, matrix, ovPaint)
+        }
+        ovPaint.alpha = 255
+    }
+
+    private val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+        textAlign = Paint.Align.RIGHT
+    }
+    private val dateText = java.text.SimpleDateFormat("MM dd ''yy", java.util.Locale.US)
+
+    /** Fecha naranja como las cámaras desechables y digitales de antes. */
+    private fun drawDate(canvas: Canvas, ov: Overlay, w: Float, h: Float) {
+        datePaint.color = ov.color
+        datePaint.textSize = w * 0.06f
+        datePaint.setShadowLayer(w * 0.012f, 0f, 0f, (ov.color and 0x00FFFFFF) or 0xAA000000.toInt())
+        datePaint.letterSpacing = 0.08f
+        canvas.drawText(dateText.format(java.util.Date()), w * 0.93f, h * 0.93f, datePaint)
+    }
+
+    private val recPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+        color = Color.WHITE
+    }
+    private val recStart = System.currentTimeMillis()
+
+    /** Pantalla de videocámara: REC, contador, batería y esquinas. */
+    private fun drawRec(canvas: Canvas, w: Float, h: Float, nowMs: Long) {
+        val m = w * 0.06f
+        val ts = w * 0.045f
+        recPaint.textSize = ts
+        recPaint.setShadowLayer(w * 0.008f, 0f, 0f, 0xAA000000.toInt())
+        recPaint.style = Paint.Style.FILL
+        recPaint.textAlign = Paint.Align.LEFT
+        if ((nowMs / 600) % 2 == 0L) {
+            recPaint.color = 0xFFFF3B30.toInt()
+            canvas.drawCircle(m + ts * 0.35f, m + ts * 0.65f, ts * 0.32f, recPaint)
+        }
+        recPaint.color = Color.WHITE
+        canvas.drawText("REC", m + ts * 0.9f, m + ts, recPaint)
+        val secs = ((nowMs - recStart) / 1000) % 3600
+        recPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText(String.format(java.util.Locale.US, "00:%02d:%02d", secs / 60, secs % 60), w - m, m + ts, recPaint)
+        recPaint.textAlign = Paint.Align.LEFT
+        canvas.drawText(java.text.SimpleDateFormat("MMM dd yyyy", java.util.Locale.US).format(java.util.Date()).uppercase(), m, h - m, recPaint)
+        // Batería
+        recPaint.style = Paint.Style.STROKE
+        recPaint.strokeWidth = w * 0.005f
+        val bx = w - m - ts * 1.6f
+        val by = h - m - ts * 0.75f
+        canvas.drawRect(bx, by, bx + ts * 1.4f, by + ts * 0.75f, recPaint)
+        recPaint.style = Paint.Style.FILL
+        canvas.drawRect(bx + ts * 1.4f, by + ts * 0.22f, bx + ts * 1.52f, by + ts * 0.53f, recPaint)
+        canvas.drawRect(bx + ts * 0.12f, by + ts * 0.12f, bx + ts * 0.95f, by + ts * 0.63f, recPaint)
+        // Esquinas
+        recPaint.style = Paint.Style.STROKE
+        recPaint.strokeWidth = w * 0.006f
+        val c = w * 0.07f
+        val e = m * 0.5f
+        canvas.drawLine(e, e, e + c, e, recPaint); canvas.drawLine(e, e, e, e + c, recPaint)
+        canvas.drawLine(w - e, e, w - e - c, e, recPaint); canvas.drawLine(w - e, e, w - e, e + c, recPaint)
+        canvas.drawLine(e, h - e, e + c, h - e, recPaint); canvas.drawLine(e, h - e, e, h - e - c, recPaint)
+        canvas.drawLine(w - e, h - e, w - e - c, h - e, recPaint); canvas.drawLine(w - e, h - e, w - e, h - e - c, recPaint)
+        recPaint.style = Paint.Style.FILL
     }
 
     val hasParticles get() = particles.isNotEmpty()
@@ -340,7 +566,7 @@ class EffectRenderer(private val context: Context) {
     }
 
     private fun colorFilter(effect: FaceEffect, nowMs: Long): ColorMatrixColorFilter? {
-        val m = effect.filter.matrix()
+        val m = effect.matrix() ?: ColorMatrix()
         if (Beauty.bright > 0.01f) {
             // Iluminar: sube sombras y da un tono cálido suave
             val t = Beauty.bright * 34f
@@ -352,7 +578,7 @@ class EffectRenderer(private val context: Context) {
                 0f, 0f, 0f, 1f, 0f,
             )))
         }
-        if (effect.filter == PhotoFilter.ORIGINAL && !effect.glitch && Beauty.bright <= 0.01f) return null
+        if (effect.matrix() == null && !effect.glitch && Beauty.bright <= 0.01f) return null
         if (effect.glitch) {
             // Ligero parpadeo de contraste
             val k = 1f + 0.08f * sin(nowMs / 90.0).toFloat()
@@ -541,29 +767,87 @@ class EffectRenderer(private val context: Context) {
         return b
     }
 
-    private fun drawParticles(canvas: Canvas, p: Particles, effect: FaceEffect, face: FaceGeom?, nowMs: Long, sx: Float, sy: Float) {
-        val bmp = EffectStore.image(context, effect.base, p.image) ?: return
+    private fun drawParticles(
+        canvas: Canvas, p: Particles, effect: FaceEffect, face: FaceGeom?, nowMs: Long,
+        sx: Float, sy: Float, imgW: Int, imgH: Int,
+    ) {
+        val bmps = p.images.mapNotNull { EffectStore.image(context, effect.base, it) }
+        if (bmps.isEmpty()) return
         val dt = if (lastMs == 0L) 0.033f else ((nowMs - lastMs) / 1000f).coerceIn(0f, 0.2f)
-        if (face != null && Random.nextFloat() < p.rate * dt) {
-            val e = face.eyes
-            val ang = Random.nextFloat() * Math.PI.toFloat() * 2
-            val r = face.faceWidth * (0.6f + Random.nextFloat() * 0.3f)
-            particles += Particle(
-                e.x + cos(ang) * r, e.y + sin(ang) * r * 1.1f,
-                (Random.nextFloat() - 0.5f) * face.faceWidth * 0.3f, -face.faceWidth * (0.4f + Random.nextFloat() * 0.4f),
-                1f, face.faceWidth * p.size * (0.7f + Random.nextFloat() * 0.6f), (Random.nextFloat() - 0.5f) * 40f
-            )
-        }
-        val it = particles.iterator()
         val pp = Paint(Paint.FILTER_BITMAP_FLAG)
+
+        if (p.mode == "orbit") {
+            // Giran alrededor de la cabeza (sin estado)
+            val f = face ?: return
+            val t = (nowMs % 1_000_000L) / 1000f
+            val n = p.count.coerceIn(1, 16)
+            for (i in 0 until n) {
+                val ang = t * 1.4f + i * (2f * Math.PI.toFloat() / n)
+                val depth = 0.75f + 0.25f * sin(ang)
+                val x = f.eyes.x + cos(ang) * f.faceWidth * 0.62f
+                val y = f.eyes.y - f.faceWidth * 0.72f + sin(ang) * f.faceWidth * 0.16f
+                val bmp = bmps[i % bmps.size]
+                val k = f.faceWidth * p.size * depth * sx / bmp.width
+                pp.alpha = (255 * (0.55f + 0.45f * depth)).toInt()
+                matrix.reset()
+                matrix.postTranslate(-bmp.width / 2f, -bmp.height / 2f)
+                matrix.postScale(k, k)
+                matrix.postRotate(p.spin * t * 60f + i * 30f)
+                matrix.postTranslate(x * sx, y * sy)
+                canvas.drawBitmap(bmp, matrix, pp)
+            }
+            return
+        }
+
+        // Crear nuevas
+        val screen = p.mode == "fall" || p.mode == "rise"
+        if (particles.size < 70 && Random.nextFloat() < p.rate * dt * (if (screen) 1f else 1f)) {
+            val img = Random.nextInt(bmps.size)
+            when (p.mode) {
+                "fall" -> {
+                    val size = imgW * p.size * 0.5f * (0.6f + Random.nextFloat() * 0.8f)
+                    particles += Particle(
+                        Random.nextFloat() * imgW, -size, (Random.nextFloat() - 0.5f) * imgW * 0.08f,
+                        imgH * (0.12f + Random.nextFloat() * 0.14f), 1f, size, Random.nextFloat() * 360f,
+                        img, (Random.nextFloat() - 0.5f) * p.spin * 200f, Random.nextFloat() * 6f
+                    )
+                }
+                "rise" -> {
+                    val size = imgW * p.size * 0.5f * (0.6f + Random.nextFloat() * 0.8f)
+                    particles += Particle(
+                        Random.nextFloat() * imgW, imgH + size, (Random.nextFloat() - 0.5f) * imgW * 0.05f,
+                        -imgH * (0.12f + Random.nextFloat() * 0.12f), 1f, size, (Random.nextFloat() - 0.5f) * 30f,
+                        img, (Random.nextFloat() - 0.5f) * p.spin * 120f, Random.nextFloat() * 6f
+                    )
+                }
+                else -> if (face != null) {
+                    val e = face.eyes
+                    val ang = Random.nextFloat() * Math.PI.toFloat() * 2
+                    val r = face.faceWidth * (0.6f + Random.nextFloat() * 0.3f)
+                    particles += Particle(
+                        e.x + cos(ang) * r, e.y + sin(ang) * r * 1.1f,
+                        (Random.nextFloat() - 0.5f) * face.faceWidth * 0.3f, -face.faceWidth * (0.4f + Random.nextFloat() * 0.4f),
+                        1f, face.faceWidth * p.size * (0.7f + Random.nextFloat() * 0.6f), (Random.nextFloat() - 0.5f) * 40f,
+                        img, (Random.nextFloat() - 0.5f) * p.spin * 120f, 0f
+                    )
+                }
+            }
+        }
+
+        val it = particles.iterator()
         while (it.hasNext()) {
             val q = it.next()
-            q.x += q.vx * dt
+            q.phase += dt
+            val sway = if (screen) sin(q.phase * 2f) * imgW * 0.03f * dt else 0f
+            q.x += q.vx * dt + sway
             q.y += q.vy * dt
-            q.life -= dt / 2.2f
-            if (q.life <= 0f) {
+            q.rot += q.vr * dt
+            q.life -= dt / (if (screen) 9f else 2.2f)
+            val out = q.y > imgH + q.size * 2 || q.y < -q.size * 2
+            if (q.life <= 0f || (screen && out && q.phase > 0.5f)) {
                 it.remove(); continue
             }
+            val bmp = bmps[q.img % bmps.size]
             pp.alpha = (255 * min(1f, q.life * 2f)).toInt()
             val k = q.size * sx / bmp.width
             matrix.reset()

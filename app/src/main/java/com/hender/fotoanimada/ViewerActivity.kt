@@ -121,11 +121,13 @@ class ViewerActivity : ComponentActivity() {
         player = ExoPlayer.Builder(this).build()
         player.addListener(object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                (playing ?: videoHolder)?.playerView?.animate()?.alpha(1f)?.setDuration(90)?.start()
+                videoHolder?.playerView?.animate()?.alpha(1f)?.setDuration(90)?.start()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED && playing != null) stopPlayback()
+                if (state == Player.STATE_ENDED) {
+                    if (playing != null) stopPlayback() else if (vitalityOn) endVitality()
+                }
             }
         })
 
@@ -252,7 +254,7 @@ class ViewerActivity : ComponentActivity() {
 
     private fun clearEffect() {
         effectToken++
-        stopPlayback()
+        resetLive()
         videoHolder?.let { h ->
             player.stop()
             h.playerView.alpha = 0f
@@ -311,7 +313,10 @@ class ViewerActivity : ComponentActivity() {
         }
 
         when (fx) {
-            Fx.LIVE -> hint.text = "Mantén presionado para ver el movimiento"
+            Fx.LIVE -> {
+                hint.text = "Mantén presionado para ver el movimiento"
+                prepareLive(holder, item)
+            }
             Fx.OFF, Fx.STILL -> hint.text = ""
             Fx.ANIMATE -> {
                 hint.text = ""
@@ -424,28 +429,110 @@ class ViewerActivity : ComponentActivity() {
 
     private fun videoFile(item: MediaRepo.Item) = File(cacheDir, "live_${item.id}.mp4")
 
-    // ---------- LIVE: mantener presionado ----------
+    // ---------- LIVE: reproducción estilo iPhone ----------
+    //
+    // 1) Al llegar a una foto Live se precarga el clip, recortado a 1.5 s antes y 1.5 s después.
+    // 2) "Vitalidad": un movimiento corto y sin sonido que termina justo en la foto.
+    // 3) Al mantener presionado: desenfoque breve, un zoom suave y el clip completo con sonido.
+    // 4) Al soltar o terminar: vuelve a la foto con el mismo desenfoque.
+
+    private var liveHolder: PageHolder? = null   // página con el clip precargado
+    private var liveKeyMs = 0L                    // posición de la foto dentro del clip
+    private var vitalityMsg: androidx.media3.exoplayer.PlayerMessage? = null
+    private var vitalityOn = false
+    private var scaleAnim: android.animation.Animator? = null
+    private val metaCache = HashMap<Long, Long>()
+
+    private fun prepareLive(holder: PageHolder, item: MediaRepo.Item) {
+        val token = effectToken
+        io.execute {
+            val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
+            val keyUs = metaCache.getOrPut(item.id) { MotionPhotoWriter.readKeyUs(this, item.uri) }
+            runOnUiThread {
+                if (token != effectToken || file == null) return@runOnUiThread
+                val keyMs = keyUs / 1000
+                val startMs = (keyMs - 1500).coerceAtLeast(0)
+                liveKeyMs = keyMs - startMs
+                val media = MediaItem.Builder()
+                    .setUri(Uri.fromFile(file))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(startMs)
+                            .setEndPositionMs(keyMs + 1500)
+                            .build()
+                    )
+                    .build()
+                holder.playerView.alpha = 0f
+                holder.playerView.player = player
+                player.repeatMode = Player.REPEAT_MODE_OFF
+                player.setMediaItem(media)
+                player.prepare()
+                player.pause()
+                liveHolder = holder
+                // Mini movimiento al llegar (como al deslizar en Fotos de iPhone)
+                main.postDelayed({ if (token == effectToken) startVitality() }, 380)
+            }
+        }
+    }
+
+    private fun startVitality() {
+        val holder = liveHolder ?: return
+        if (playing != null) return
+        vitalityOn = true
+        player.volume = 0f
+        player.seekTo((liveKeyMs - 900).coerceAtLeast(0))
+        player.play()
+        holder.playerView.animate().alpha(1f).setDuration(120).start()
+        blurPulse(holder.content, 8f, 220)
+        vitalityMsg?.cancel()
+        vitalityMsg = player.createMessage { _, _ -> endVitality() }
+            .setPosition(liveKeyMs)
+            .setLooper(Looper.getMainLooper())
+            .setDeleteAfterDelivery(true)
+            .send()
+    }
+
+    private fun endVitality() {
+        if (!vitalityOn) return
+        vitalityOn = false
+        vitalityMsg?.cancel()
+        vitalityMsg = null
+        val holder = liveHolder ?: return
+        if (playing != null) return
+        holder.playerView.animate().alpha(0f).setDuration(260).withEndAction {
+            if (playing == null) {
+                player.pause()
+                player.seekTo(0)
+                player.volume = 1f
+            }
+        }.start()
+        blurPulse(holder.content, 6f, 260)
+    }
 
     private fun startPlayback(holder: PageHolder) {
         val item = items.getOrNull(holder.bindingAdapterPosition) ?: return
         if (!item.isLive || fxOf(item) != Fx.LIVE) return
-        val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item)) ?: return
-
-        stopPlayback()
+        if (liveHolder !== holder) {
+            prepareLive(holder, item)
+            return
+        }
+        vitalityOn = false
+        vitalityMsg?.cancel()
+        vitalityMsg = null
         playing = holder
         pager.isUserInputEnabled = false
         holder.page.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         setBars(false)
 
-        holder.playerView.player = player
-        player.repeatMode = Player.REPEAT_MODE_OFF
-        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-        player.prepare()
+        player.volume = 1f
+        player.seekTo(0)
         player.play()
-        // Pequeño "respiro" como en iPhone: se aleja un poco y vuelve
-        holder.content.animate().scaleX(0.97f).scaleY(0.97f).setDuration(120).withEndAction {
-            holder.content.animate().scaleX(1f).scaleY(1f).setDuration(260).start()
-        }.start()
+        holder.playerView.animate().cancel()
+        holder.playerView.animate().alpha(1f).setDuration(140).start()
+        blurPulse(holder.content, 14f, 300)
+        // Zoom suave mientras se mueve (la foto "cobra vida")
+        animateScale(holder.content, 1.045f, 650, android.view.animation.DecelerateInterpolator(1.6f))
+        pulseLiveChip(true)
     }
 
     private fun stopPlayback() {
@@ -453,10 +540,83 @@ class ViewerActivity : ComponentActivity() {
         playing = null
         pager.isUserInputEnabled = true
         setBars(true)
-        holder.playerView.animate().alpha(0f).setDuration(250).withEndAction {
-            if (playing !== holder) holder.playerView.player = null
+        pulseLiveChip(false)
+        holder.playerView.animate().cancel()
+        holder.playerView.animate().alpha(0f).setDuration(300).withEndAction {
+            if (playing == null) {
+                player.pause()
+                player.seekTo(0)
+            }
         }.start()
-        player.pause()
+        blurPulse(holder.content, 12f, 320)
+        animateScale(holder.content, 1f, 320, android.view.animation.DecelerateInterpolator())
+    }
+
+    /** Detiene todo lo del Live (al cambiar de foto o de efecto). */
+    private fun resetLive() {
+        vitalityOn = false
+        vitalityMsg?.cancel()
+        vitalityMsg = null
+        stopPlayback()
+        liveHolder?.let { h ->
+            h.playerView.animate().cancel()
+            h.playerView.alpha = 0f
+            h.content.scaleX = 1f
+            h.content.scaleY = 1f
+            if (android.os.Build.VERSION.SDK_INT >= 31) h.content.setRenderEffect(null)
+            h.playerView.player = null
+        }
+        if (liveHolder != null) player.stop()
+        liveHolder = null
+    }
+
+    private fun animateScale(v: View, to: Float, ms: Long, interp: android.animation.TimeInterpolator) {
+        scaleAnim?.cancel()
+        scaleAnim = android.animation.AnimatorSet().apply {
+            playTogether(
+                android.animation.ObjectAnimator.ofFloat(v, View.SCALE_X, v.scaleX, to),
+                android.animation.ObjectAnimator.ofFloat(v, View.SCALE_Y, v.scaleY, to),
+            )
+            duration = ms
+            interpolator = interp
+            start()
+        }
+    }
+
+    /** Desenfoque que sube y baja: tapa el cambio entre foto y video (Android 12+). */
+    private fun blurPulse(v: View, peak: Float, ms: Long) {
+        if (android.os.Build.VERSION.SDK_INT < 31) return
+        ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ms
+            addUpdateListener {
+                val t = it.animatedValue as Float
+                val r = peak * kotlin.math.sin(t * Math.PI).toFloat()
+                v.setRenderEffect(
+                    if (r < 0.5f) null
+                    else android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP)
+                )
+            }
+            start()
+        }
+    }
+
+    private var chipPulse: ValueAnimator? = null
+
+    private fun pulseLiveChip(on: Boolean) {
+        chipPulse?.cancel()
+        if (!on) {
+            fxChip.alpha = 1f
+            fxChip.setTextColor(0xFFFFFFFF.toInt())
+            return
+        }
+        fxChip.setTextColor(0xFF00E676.toInt())
+        chipPulse = ValueAnimator.ofFloat(1f, 0.55f).apply {
+            duration = 650
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { fxChip.alpha = it.animatedValue as Float }
+            start()
+        }
     }
 
     private fun setBars(visible: Boolean) {

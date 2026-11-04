@@ -283,4 +283,18 @@ object MotionPhotoWriter {
         }
         return true
     }
+
+    private val keyRegex = Regex("""(?:MotionPhotoPresentationTimestampUs|MicroVideoPresentationTimestampUs)="(-?\d+)"""")
+
+    /** Momento de la foto dentro del video (µs). Si no se sabe, 1.5 s. */
+    fun readKeyUs(context: Context, uri: Uri): Long = try {
+        val head = context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(128 * 1024)
+            val n = input.read(buf)
+            if (n > 0) String(buf, 0, n, Charsets.ISO_8859_1) else ""
+        } ?: ""
+        keyRegex.find(head)?.groupValues?.get(1)?.toLongOrNull()?.takeIf { it >= 0 } ?: 1_500_000L
+    } catch (_: Exception) {
+        1_500_000L
+    }
 }

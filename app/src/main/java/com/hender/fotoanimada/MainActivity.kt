@@ -888,7 +888,7 @@ class MainActivity : ComponentActivity() {
     private fun applyPreviewFilter() {
         val cf = when (mode) {
             Mode.VIDEO, Mode.TIMELAPSE -> null
-            Mode.EFFECTS -> engine.effect?.filter?.colorFilter()
+            Mode.EFFECTS -> engine.effect?.matrix()?.let { android.graphics.ColorMatrixColorFilter(it) }
             Mode.INSTANT -> instantLook.colorFilter()
             else -> filter.colorFilter()
         }

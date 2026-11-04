@@ -54,8 +54,8 @@ class FaceOverlayView @JvmOverloads constructor(
         if (imageWidth <= 0 || imageHeight <= 0) return
         // Misma escala que la vista previa (llena el ancho, anclada arriba)
         val s = maxOf(width.toFloat() / imageWidth, height.toFloat() / imageHeight)
-        renderer.drawOverlay(canvas, faces, fx, System.currentTimeMillis(), s, s)
-        if (fx.particles != null) postInvalidateOnAnimation()
+        renderer.drawOverlay(canvas, faces, fx, System.currentTimeMillis(), s, s, imageWidth, imageHeight)
+        if (renderer.animated(fx)) postInvalidateOnAnimation()
     }
 }
 
@@ -166,8 +166,11 @@ class EffectsEngine(
             if (mirror) m.postScale(-1f, 1f, uw / 2f, 0f)
             Canvas(up!!).drawBitmap(src, m, null)
             src.recycle()
-            overlay.imageWidth = uw
-            overlay.imageHeight = uh
+            if (overlay.imageWidth != uw || overlay.imageHeight != uh) {
+                overlay.imageWidth = uw
+                overlay.imageHeight = uh
+                overlay.postInvalidate()
+            }
 
             detectAsync(up, fx, uw)
 
