@@ -86,6 +86,70 @@ half4 main(float2 p) {
 }
 """
 
+    private const val NIGHT_VISION = """
+uniform shader content;
+uniform float2 size;
+half4 main(float2 p) {
+    float3 c = float3(content.eval(p).rgb);
+    float l = dot(c, float3(0.299, 0.587, 0.114));
+    l = pow(min(1.0, l * 2.6), 0.8) + 0.03;
+    float2 uv = (p / size - 0.5) * float2(1.0, size.y / size.x);
+    float v = 1.0 - smoothstep(0.38, 0.85, length(uv));
+    float n = fract(sin(dot(floor(p / 2.0), float2(12.9898, 78.233))) * 43758.5453);
+    l = l * v + (n - 0.5) * 0.09;
+    l *= 0.93 + 0.07 * sin(p.y * 1.2);
+    return half4(half3(float3(0.22, 1.0, 0.32) * l), 1.0);
+}
+"""
+
+    /** Visión nocturna en vivo (verde, con grano y viñeta). */
+    fun nightVisionPreview(w: Int, h: Int): RenderEffect? {
+        if (Build.VERSION.SDK_INT < 33 || w <= 0 || h <= 0) return null
+        return try {
+            RenderEffect.createRuntimeShaderEffect(
+                RuntimeShader(NIGHT_VISION).apply { setFloatUniform("size", w.toFloat(), h.toFloat()) }, "content"
+            )
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    /** Respaldo de color para cels sin shaders. */
+    fun nightVisionMatrix(): android.graphics.ColorMatrix {
+        val g = 2.4f
+        val l = floatArrayOf(0.299f * g, 0.587f * g, 0.114f * g)
+        return android.graphics.ColorMatrix(floatArrayOf(
+            l[0] * 0.22f, l[1] * 0.22f, l[2] * 0.22f, 0f, 6f,
+            l[0], l[1], l[2], 0f, 8f,
+            l[0] * 0.32f, l[1] * 0.32f, l[2] * 0.32f, 0f, 6f,
+            0f, 0f, 0f, 1f, 0f,
+        ))
+    }
+
+    /** Visión nocturna para la foto final (misma fórmula que el shader). */
+    fun nightVision(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val rnd = java.util.Random(11)
+        val asp = h.toFloat() / w
+        for (y in 0 until h) {
+            val line = 0.93f + 0.07f * sin((y + 0.5f) * 1.2f * w / 1080f)
+            for (x in 0 until w) {
+                val c = px[y * w + x]
+                var l = 0.299f * r(c) + 0.587f * g(c) + 0.114f * b(c)
+                l = Math.pow(min(1f, l * 2.6f).toDouble(), 0.8).toFloat() + 0.03f
+                val ux = (x + 0.5f) / w - 0.5f
+                val uy = ((y + 0.5f) / h - 0.5f) * asp
+                val v = 1f - smooth(0.38f, 0.85f, sqrt(ux * ux + uy * uy))
+                l = (l * v + (rnd.nextFloat() - 0.5f) * 0.09f) * line
+                px[y * w + x] = pack(0.22f * l, l, 0.32f * l)
+            }
+        }
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     /** Efecto en vivo para la vista previa (null si el cel no lo soporta). */
     fun preview(look: InstantLook, w: Int, h: Int): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33 || w <= 0 || h <= 0) return null

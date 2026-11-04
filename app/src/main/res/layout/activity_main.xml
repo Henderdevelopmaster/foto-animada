@@ -97,12 +97,22 @@
             android:contentDescription="Filtros"
             android:src="@drawable/ic_filters" />
 
+        <ImageButton
+            android:id="@+id/flashButton"
+            android:layout_width="44dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="48dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Flash"
+            android:src="@drawable/ic_flash_off" />
+
         <TextView
             android:id="@+id/formatButton"
             android:layout_width="wrap_content"
             android:layout_height="26dp"
             android:layout_gravity="start|center_vertical"
-            android:layout_marginStart="56dp"
+            android:layout_marginStart="96dp"
             android:background="@drawable/bg_res_pill"
             android:gravity="center"
             android:letterSpacing="0.05"
@@ -526,4 +536,12 @@
         </FrameLayout>
     </LinearLayout>
     </LinearLayout>
+
+    <!-- Flash de pantalla (cámara frontal) -->
+    <View
+        android:id="@+id/screenFlash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:elevation="30dp"
+        android:visibility="gone" />
 </FrameLayout>

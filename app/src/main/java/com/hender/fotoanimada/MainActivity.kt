@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
 
     enum class Mode(val label: String) {
         TIMELAPSE("TIME-LAPSE"), VIDEO("VIDEO"), PHOTO("FOTO"), EFFECTS("EFECTOS"),
-        PORTRAIT("RETRATO"), NIGHT("NOCHE"), INSTANT("INSTANTÁNEA")
+        PORTRAIT("RETRATO"), NIGHT("NOCHE"), NIGHT_VISION("VISIÓN NOCTURNA"), INSTANT("INSTANTÁNEA")
     }
 
     private lateinit var previewView: PreviewView
@@ -127,6 +127,10 @@ class MainActivity : ComponentActivity() {
     private var instantFrame = InstantFrame.NONE
     private var instantTab = 0
     private var boomKind = "photo" // photo, normal, slow, echo
+    private lateinit var flashButton: ImageButton
+    private lateinit var screenFlash: View
+    private var flashMode = "off" // off, auto, on, torch
+    private var flashColor = 0xFFFFFFFF.toInt()
 
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -248,6 +252,11 @@ class MainActivity : ComponentActivity() {
             bindCamera()
         }
         boomButton.setOnClickListener { showBoomMenu() }
+        flashButton = findViewById(R.id.flashButton)
+        screenFlash = findViewById(R.id.screenFlash)
+        flashMode = prefs.getString(KEY_FLASH, "off") ?: "off"
+        flashColor = prefs.getInt(KEY_FLASH_COLOR, 0xFFFFFFFF.toInt())
+        flashButton.setOnClickListener { showFlashMenu() }
 
         // TextureView: permite pintar la vista previa con el filtro en vivo
         previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -485,7 +494,7 @@ class MainActivity : ComponentActivity() {
     /** Qué combinación de cámara necesita cada modo (si cambia, hay que reconectar). */
     private fun groupOf(m: Mode) = when (m) {
         Mode.VIDEO -> 1
-        Mode.NIGHT -> 2
+        Mode.NIGHT, Mode.NIGHT_VISION -> 2
         Mode.PORTRAIT -> 3
         Mode.EFFECTS -> 4
         else -> 0
@@ -779,7 +788,8 @@ class MainActivity : ComponentActivity() {
         centerMode()
         updateResLabel()
         layoutPreview()
-        val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT
+        val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT || mode == Mode.NIGHT_VISION
+        updateFlashIcon()
         formatButton.visibility = if (photoLike) View.VISIBLE else View.GONE
         formatButton.text = CameraSettings.formatLabel(format)
         boomButton.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
@@ -805,6 +815,7 @@ class MainActivity : ComponentActivity() {
         val hint = when (mode) {
             Mode.PORTRAIT -> "El fondo se desenfoca al tomar la foto"
             Mode.NIGHT -> "Mantén el cel quieto al disparar"
+            Mode.NIGHT_VISION -> "Para ver en lo oscuro · prende la linterna si no hay nada de luz"
             Mode.TIMELAPSE -> "Toca para empezar y para terminar"
             Mode.INSTANT -> when {
                 instantFrame == InstantFrame.BOOTH -> "Fotomatón: toca y posa para 4 fotos"
@@ -821,7 +832,7 @@ class MainActivity : ComponentActivity() {
 
         liveToggle.visibility = if (mode == Mode.PHOTO) View.VISIBLE else View.INVISIBLE
         liveToggle.setImageResource(if (liveOn) R.drawable.ic_live_on else R.drawable.ic_live_off)
-        val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE || mode == Mode.EFFECTS
+        val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE || mode == Mode.EFFECTS || mode == Mode.NIGHT_VISION
         if (filterList.childCount > 0) {
             val wantInstant = mode == Mode.INSTANT
             if (isInstantKey(filterList.getChildAt(0).tag) != wantInstant) buildFilterChips()
@@ -1116,10 +1127,15 @@ class MainActivity : ComponentActivity() {
 
     private fun applyPreviewFilter() {
         // Filtros que necesitan shader (Android 13+): se aplican a toda la vista previa
-        val fx = if (mode == Mode.INSTANT && instantLook.fx) InstantFx.preview(instantLook, previewView.width, previewView.height) else null
+        val fx = when {
+            mode == Mode.NIGHT_VISION -> InstantFx.nightVisionPreview(previewView.width, previewView.height)
+            mode == Mode.INSTANT && instantLook.fx -> InstantFx.preview(instantLook, previewView.width, previewView.height)
+            else -> null
+        }
         if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx)
         val cf = when {
             fx != null -> null
+            mode == Mode.NIGHT_VISION -> android.graphics.ColorMatrixColorFilter(InstantFx.nightVisionMatrix())
             mode == Mode.VIDEO || mode == Mode.TIMELAPSE -> null
             mode == Mode.EFFECTS -> engine.effect?.matrix()?.let { android.graphics.ColorMatrixColorFilter(it) }
             mode == Mode.INSTANT -> instantLook.colorFilter()
@@ -1509,7 +1525,7 @@ class MainActivity : ComponentActivity() {
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val group = when (mode) {
             Mode.VIDEO -> buildVideoGroup()
-            Mode.NIGHT -> buildPhotoGroup(night = true, analysis = false)
+            Mode.NIGHT, Mode.NIGHT_VISION -> buildPhotoGroup(night = true, analysis = false)
             Mode.PORTRAIT -> buildPhotoGroup(night = false, analysis = false)
             Mode.EFFECTS -> buildEffectsGroup()
             else -> buildPhotoGroup(night = false, analysis = true)
@@ -1519,6 +1535,7 @@ class MainActivity : ComponentActivity() {
             camera = provider.bindToLifecycle(this, selector, group)
             observeZoom()
             applySmoothFps()
+            applyFlash()
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo abrir la cámara", e)
             showToast("Error de cámara: ${e.message}")
@@ -1575,7 +1592,7 @@ class MainActivity : ComponentActivity() {
         val cam = camera ?: return
         try {
             val ctl = androidx.camera.camera2.interop.Camera2CameraControl.from(cam.cameraControl)
-            if (mode == Mode.NIGHT || mode == Mode.VIDEO) {
+            if (mode == Mode.NIGHT || mode == Mode.NIGHT_VISION || mode == Mode.VIDEO) {
                 ctl.clearCaptureRequestOptions()
                 return
             }
@@ -1737,7 +1754,46 @@ class MainActivity : ComponentActivity() {
             .build()
     }
 
+    private val front get() = lensFacing == CameraSelector.LENS_FACING_FRONT
+
+    /** Con la cámara frontal el "flash" es la pantalla encendida a todo brillo (del color elegido). */
+    private fun wantsScreenFlash() = front && when (flashMode) {
+        "on", "torch" -> true
+        "auto" -> lowLight
+        else -> false
+    }
+
+    private fun showScreenFlash() {
+        screenFlash.setBackgroundColor(flashColor)
+        screenFlash.alpha = 1f
+        screenFlash.visibility = View.VISIBLE
+        window.attributes = window.attributes.apply { screenBrightness = 1f }
+    }
+
+    private fun hideScreenFlash() {
+        screenFlash.animate().alpha(0f).setDuration(200).withEndAction {
+            screenFlash.visibility = View.GONE
+            window.attributes = window.attributes.apply {
+                screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }.start()
+    }
+
     private fun takeStill() {
+        if (busy || imageCapture == null) return
+        if (wantsScreenFlash()) {
+            busy = true
+            showScreenFlash()
+            // Dar tiempo a que la cámara se acomode a la luz de la pantalla
+            main.postDelayed({
+                busy = false
+                doTakeStill()
+                main.postDelayed({ hideScreenFlash() }, 650)
+            }, 420)
+        } else doTakeStill()
+    }
+
+    private fun doTakeStill() {
         val ic = imageCapture ?: return
         if (busy) return
         busy = true
@@ -1752,7 +1808,7 @@ class MainActivity : ComponentActivity() {
 
         val currentMode = mode
         val front = lensFacing == CameraSelector.LENS_FACING_FRONT
-        if (mode == Mode.PORTRAIT || mode == Mode.NIGHT) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
+        if (mode == Mode.PORTRAIT || mode == Mode.NIGHT || mode == Mode.NIGHT_VISION) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
         if (live) {
             livePill.visibility = View.VISIBLE
@@ -1780,6 +1836,12 @@ class MainActivity : ComponentActivity() {
                     Mode.INSTANT -> saveInstant(p)
                     Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") { Processing.portrait(Enhance.jpeg(this, it), currentFilter) }
                     Mode.EFFECTS -> saveEffectPhoto(p, front)
+                    Mode.NIGHT_VISION -> saveProcessed(p, "_NOCTURNA") {
+                        val b = Processing.decode(Enhance.jpeg(this, it, night = true), 4096)
+                        val nv = InstantFx.nightVision(b)
+                        b.recycle()
+                        Processing.encode(nv, 94).also { nv.recycle() }
+                    }
                     Mode.NIGHT -> saveProcessed(p, "_NOCHE") {
                         if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, night = true), currentFilter)
                         else Processing.night(it, currentFilter)
@@ -2027,6 +2089,71 @@ class MainActivity : ComponentActivity() {
     private var boomFrames: Frames? = null
     private val boomAnimator by lazy { FrameAnimator(developImage) }
 
+    private fun updateFlashIcon() {
+        flashButton.visibility = if (mode == Mode.EFFECTS && !front) View.GONE else View.VISIBLE
+        flashButton.setImageResource(when (flashMode) {
+            "auto" -> R.drawable.ic_flash_auto
+            "on" -> R.drawable.ic_flash_on
+            "torch" -> R.drawable.ic_flash_torch
+            else -> R.drawable.ic_flash_off
+        })
+        flashButton.setColorFilter(if (flashMode == "off") 0xFFFFFFFF.toInt() else 0xFFFFD54F.toInt())
+    }
+
+    /** Flash de verdad atrás; adelante, la pantalla. Linterna = luz fija (sirve para video y visión nocturna). */
+    private fun applyFlash() {
+        val back = !front
+        imageCapture?.flashMode = when {
+            !back -> ImageCapture.FLASH_MODE_OFF
+            flashMode == "auto" -> ImageCapture.FLASH_MODE_AUTO
+            flashMode == "on" -> ImageCapture.FLASH_MODE_ON
+            else -> ImageCapture.FLASH_MODE_OFF
+        }
+        val torch = back && (flashMode == "torch" || (flashMode == "on" && mode == Mode.VIDEO))
+        try {
+            camera?.cameraControl?.enableTorch(torch)
+        } catch (_: Exception) {
+        }
+        updateFlashIcon()
+    }
+
+    private fun showFlashMenu() {
+        val modes = listOf(
+            Triple("off", "Apagado", R.drawable.ic_flash_off),
+            Triple("auto", "Automático", R.drawable.ic_flash_auto),
+            Triple("on", "Encendido", R.drawable.ic_flash_on),
+            Triple("torch", "Linterna (luz fija)", R.drawable.ic_flash_torch),
+        )
+        val colors = listOf(
+            "Blanco" to 0xFFFFFFFF.toInt(), "Cálido" to 0xFFFFE2B8.toInt(), "Rosa" to 0xFFFF9EC7.toInt(),
+            "Morado" to 0xFFC9A2FF.toInt(), "Azul" to 0xFF9CCBFF.toInt(), "Verde" to 0xFFB4F5C2.toInt(),
+            "Atardecer" to 0xFFFFB27A.toInt(),
+        )
+        val items = modes.map { (id, label, icon) ->
+            Sheet.Item(label, icon, checked = flashMode == id) {
+                flashMode = id
+                prefs.edit().putString(KEY_FLASH, id).apply()
+                applyFlash()
+            }
+        } + colors.map { (label, color) ->
+            Sheet.Item("Pantalla $label", R.drawable.ic_flash_on, checked = flashColor == color,
+                subtitle = "Flash de la cámara frontal") {
+                flashColor = color
+                prefs.edit().putInt(KEY_FLASH_COLOR, color).apply()
+                if (flashMode == "off") {
+                    flashMode = "on"
+                    prefs.edit().putString(KEY_FLASH, "on").apply()
+                }
+                applyFlash()
+                // Probadita del color
+                showScreenFlash()
+                main.postDelayed({ hideScreenFlash() }, 350)
+            }
+        }
+        Sheet.actions(this, "Flash", items,
+            subtitle = if (front) "Adelante la pantalla hace de flash, del color que elijas" else "Atrás usa el flash del cel")
+    }
+
     private fun showBoomMenu() {
         val kinds = listOf(
             Triple("photo", "Foto", R.drawable.ic_photo),
@@ -2265,7 +2392,7 @@ class MainActivity : ComponentActivity() {
     private val qrScan = object : Runnable {
         override fun run() {
             main.postDelayed(this, 800)
-            if (qrBusy || busy || (mode != Mode.PHOTO && mode != Mode.PORTRAIT && mode != Mode.NIGHT)) return
+            if (qrBusy || busy || (mode != Mode.PHOTO && mode != Mode.PORTRAIT && mode != Mode.NIGHT && mode != Mode.NIGHT_VISION)) return
             val bmp = previewView.bitmap ?: return
             val small = Bitmap.createScaledBitmap(bmp, bmp.width / 2, bmp.height / 2, true)
             qrBusy = true
@@ -2381,6 +2508,8 @@ class MainActivity : ComponentActivity() {
         private const val KEY_SHAPE = "instant_shape"
         private const val KEY_FRAME = "instant_frame"
         private const val KEY_BOOM = "instant_boom"
+        private const val KEY_FLASH = "flash_mode"
+        private const val KEY_FLASH_COLOR = "flash_color"
         private const val MAX_QUICKTAKE_S = 60
     }
 }
