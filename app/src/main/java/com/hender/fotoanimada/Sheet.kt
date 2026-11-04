@@ -70,6 +70,7 @@ object Sheet {
             setGravity(Gravity.BOTTOM)
             setWindowAnimations(android.R.style.Animation_InputMethod)
             setDimAmount(0.45f)
+            setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
         dialog.show()
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)

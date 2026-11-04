@@ -1579,22 +1579,29 @@ class MainActivity : ComponentActivity() {
             setSelection(caption.length)
             hint = "Escribe algo…"
             maxLines = 3
-            setPadding(dp(20), dp(14), dp(20), dp(14))
+            textSize = 17f
+            setTextColor(0xFFFFFFFF.toInt())
+            setHintTextColor(0x66FFFFFF)
+            setBackgroundResource(R.drawable.bg_segmented)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Texto de la instantánea")
-            .setView(input)
-            .setPositiveButton("Listo") { _, _ ->
+        Sheet.custom(this, "Texto de la instantánea", input, listOf(
+            "Listo" to {
                 caption = input.text.toString().trim()
                 prefs.edit().putString(KEY_CAPTION, caption).apply()
                 captionPill.text = caption.ifBlank { "Toca para escribir algo" }
-            }
-            .setNeutralButton("Borrar") { _, _ ->
+            },
+            "Borrar" to {
                 caption = ""
                 prefs.edit().putString(KEY_CAPTION, "").apply()
                 captionPill.text = "Toca para escribir algo"
-            }
-            .show()
+            },
+        ), primary = 0)
+        input.requestFocus()
+        input.postDelayed({
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }, 250)
     }
 
     private fun showResult(bmp: Bitmap?, uri: android.net.Uri, mime: String) {
