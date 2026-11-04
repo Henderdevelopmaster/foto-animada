@@ -625,12 +625,84 @@ class ViewerActivity : ComponentActivity() {
 
     private fun shareCurrent() {
         val item = items.getOrNull(current) ?: return
+        if (!item.isLive) {
+            sendUri(item.uri, if (item.isVideo) "video/mp4" else "image/jpeg")
+            return
+        }
+        // Las fotos animadas no se mueven en Instagram ni en WhatsApp:
+        // allá hay que mandarlas como video.
+        val last = prefs.getString(KEY_SHARE, "story")
+        Sheet.actions(this, "Compartir", listOf(
+            Sheet.Item("Video para historias", R.drawable.ic_export_video, checked = last == "story",
+                subtitle = "Vertical 9:16, llena la pantalla") { shareAs(item, "story") },
+            Sheet.Item("Video", R.drawable.ic_export_video, checked = last == "video",
+                subtitle = "Tal como se ve, en bucle") { shareAs(item, "video") },
+            Sheet.Item("GIF", R.drawable.ic_gif, checked = last == "gif") { shareAs(item, "gif") },
+            Sheet.Item("Foto quieta", R.drawable.ic_photo, checked = last == "photo") { shareAs(item, "photo") },
+        ), subtitle = "En Instagram y WhatsApp solo se mueve el video")
+    }
+
+    private fun sendUri(uri: android.net.Uri, mime: String) {
         val send = Intent(Intent.ACTION_SEND).apply {
-            type = "image/jpeg"
-            putExtra(Intent.EXTRA_STREAM, item.uri)
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(send, "Compartir foto"))
+        startActivity(Intent.createChooser(send, "Compartir"))
+    }
+
+    /** Prepara la foto animada en el formato elegido y abre el menú de compartir. */
+    private fun shareAs(item: MediaRepo.Item, kind: String) {
+        prefs.edit().putString(KEY_SHARE, kind).apply()
+        if (kind == "photo") {
+            sendUri(item.uri, "image/jpeg")
+            return
+        }
+        showBusy(if (kind == "gif") "Creando GIF…" else "Creando video…")
+        io.execute {
+            var uri: android.net.Uri? = null
+            var msg: String? = null
+            try {
+                val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
+                    ?: throw IllegalStateException("esta foto no tiene movimiento")
+                val filter = MotionPhotoWriter.readFilter(this, item.uri)
+                val bounce = fxOf(item) == Fx.BOUNCE
+                when (kind) {
+                    "gif" -> {
+                        val f = Frames.load(file, maxSide = 480, maxFrames = 60) ?: throw IllegalStateException("sin fotogramas")
+                        val out = File(cacheDir, "share.gif")
+                        Exporter.framesToGif(f, bounce, filter, out)
+                        f.recycle()
+                        uri = Exporter.saveGif(this, out)
+                        out.delete()
+                    }
+                    "story" -> {
+                        val f = Frames.load(file, maxSide = 1280, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
+                        val out = File(cacheDir, "share.mp4")
+                        Exporter.framesToStory(f, bounce, filter, out)
+                        f.recycle()
+                        uri = Exporter.saveVideoFile(this, out, "_HISTORIA")
+                        out.delete()
+                    }
+                    else -> {
+                        val f = Frames.load(file, maxSide = 1280, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
+                        val out = File(cacheDir, "share.mp4")
+                        Exporter.framesToMp4(f, bounce, filter, out)
+                        f.recycle()
+                        uri = Exporter.saveVideoFile(this, out, "_LIVE")
+                        out.delete()
+                    }
+                }
+            } catch (e: Throwable) {
+                msg = "No se pudo preparar: ${e.message}"
+            }
+            runOnUiThread {
+                showBusy(null)
+                val u = uri
+                if (u != null) sendUri(u, if (kind == "gif") "image/gif" else "video/mp4")
+                else msg?.let { say(it) }
+            }
+        }
     }
 
     private fun deleteCurrent() {
@@ -714,6 +786,8 @@ class ViewerActivity : ComponentActivity() {
         }
         if (item.isLive) {
             actions += Sheet.Item("Elegir portada", R.drawable.ic_cover) { openKeyPanel(item) }
+            actions += Sheet.Item("Video para historias", R.drawable.ic_export_video,
+                subtitle = "Vertical 9:16 con fondo desenfocado") { exportStory(item) }
             actions += Sheet.Item("Exportar como video", R.drawable.ic_export_video) { exportVideo(item) }
             actions += Sheet.Item("Exportar como GIF", R.drawable.ic_gif) { exportGif(item) }
         }
@@ -833,7 +907,7 @@ class ViewerActivity : ComponentActivity() {
                 val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
                     ?: throw IllegalStateException("sin video")
                 if (fx == Fx.LOOP || fx == Fx.BOUNCE) {
-                    val f = Frames.load(file, maxSide = 960, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
+                    val f = Frames.load(file, maxSide = 1280, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
                     val out = File(cacheDir, "export.mp4")
                     Exporter.framesToMp4(f, fx == Fx.BOUNCE, MotionPhotoWriter.readFilter(this, item.uri), out)
                     f.recycle()
@@ -843,6 +917,27 @@ class ViewerActivity : ComponentActivity() {
                     Exporter.saveVideoFile(this, file, "_LIVE")
                 }
                 "Video guardado en la galería"
+            } catch (e: Throwable) {
+                "No se pudo exportar: ${e.message}"
+            }
+            runOnUiThread { showBusy(null); say(msg) }
+        }
+    }
+
+    private fun exportStory(item: MediaRepo.Item) {
+        val bounce = fxOf(item) == Fx.BOUNCE
+        showBusy("Creando video de historia…")
+        io.execute {
+            val msg = try {
+                val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
+                    ?: throw IllegalStateException("sin video")
+                val f = Frames.load(file, maxSide = 1280, maxFrames = 90) ?: throw IllegalStateException("sin fotogramas")
+                val out = File(cacheDir, "export.mp4")
+                Exporter.framesToStory(f, bounce, MotionPhotoWriter.readFilter(this, item.uri), out)
+                f.recycle()
+                Exporter.saveVideoFile(this, out, "_HISTORIA")
+                out.delete()
+                "Video 9:16 guardado en la galería"
             } catch (e: Throwable) {
                 "No se pudo exportar: ${e.message}"
             }
@@ -939,6 +1034,7 @@ class ViewerActivity : ComponentActivity() {
     companion object {
         const val EXTRA_ID = "id"
         const val EXTRA_ALBUM = "album"
+        private const val KEY_SHARE = "share_kind"
     }
 
     // ---------- Páginas ----------

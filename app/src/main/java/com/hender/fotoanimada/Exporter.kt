@@ -5,7 +5,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -18,6 +20,8 @@ import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.max
+import kotlin.math.min
 
 /** Guardar videos y exportar efectos como video o GIF. */
 object Exporter {
@@ -205,6 +209,45 @@ object Exporter {
             surface.release()
             if (track >= 0) muxer.stop()
             muxer.release()
+        }
+    }
+
+    /**
+     * Video vertical 9:16 para historias: la foto centrada y, de fondo, ella
+     * misma desenfocada y oscurecida, para que llene la pantalla sin franjas.
+     */
+    fun framesToStory(frames: Frames, bounce: Boolean, filter: PhotoFilter, out: File, loops: Int = 3) {
+        val w = 1080
+        val h = 1920
+        val seq = sequence(frames.bitmaps.size, bounce, loops)
+        // Fondo: versiones diminutas que el lienzo estira (sale desenfocado y pesa nada)
+        val tiny = frames.bitmaps.map {
+            Bitmap.createScaledBitmap(it, max(1, it.width / 16), max(1, it.height / 16), true)
+        }
+        val paint = filter.paint()
+        val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = filter.paint().colorFilter
+        }
+        val dark = Paint().apply { color = 0x66000000 }
+        val first = frames.bitmaps.first()
+        val k = min(w.toFloat() / first.width, h * 0.72f / first.height)
+        val fw = first.width * k
+        val fh = first.height * k
+        val dst = RectF((w - fw) / 2f, (h - fh) / 2f, (w + fw) / 2f, (h + fh) / 2f)
+        try {
+            renderMp4(w, h, frames.fps, seq.size, out) { c, i, _ ->
+                val f = seq[i]
+                // Fondo que cubre toda la pantalla
+                val t = tiny[f]
+                val kk = max(w.toFloat() / t.width, h.toFloat() / t.height)
+                val bw = t.width * kk
+                val bh = t.height * kk
+                c.drawBitmap(t, null, RectF((w - bw) / 2f, (h - bh) / 2f, (w + bw) / 2f, (h + bh) / 2f), bgPaint)
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), dark)
+                c.drawBitmap(frames.bitmaps[f], null, dst, paint)
+            }
+        } finally {
+            tiny.forEach { it.recycle() }
         }
     }
 
