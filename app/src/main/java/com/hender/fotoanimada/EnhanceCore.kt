@@ -24,6 +24,8 @@ object EnhanceCore {
 
     class Options(
         val night: Boolean = false,
+        /** Modo atardecer: respeta los naranjas y levanta más la tierra. */
+        val sunset: Boolean = false,
         val faces: List<Face> = emptyList(),
         val threads: Int = 4,
         val strength: Float = 1f,
@@ -106,6 +108,17 @@ object EnhanceCore {
             }
         }
 
+        // ¿Parece atardecer? (muchos naranjas/rojos saturados) → no "corregir" ese color
+        var warm = 0
+        for (i in 0 until n) {
+            val r = s.r[i]; val g = s.g[i]; val b = s.b[i]
+            if (r > g && g > b && r - b > 0.12f && luma[i] > 0.2f) {
+                val hue = 60f * (g - b) / (r - b)
+                if (hue in 4f..50f && (r - b) / r > 0.3f) warm++
+            }
+        }
+        val sunsetLike = o.sunset || warm > n * 0.15f
+
         // ---- 2) Tono por zonas (filtro guiado: suave pero respeta bordes) ----
         val eps = 1f / 256f
         val l = FloatArray(n) { fastLog2(luma[it] + eps) }
@@ -131,12 +144,12 @@ object EnhanceCore {
         val blo = percentile(base, 0.02f)
         val bhi = percentile(base, 0.985f)
         val range = max(0.5f, bhi - blo)
-        val compress = 1f - (1f - ((if (o.night) 4.6f else 5.2f) / range).coerceIn(0.58f, 1f)) * min(k, 1f)
+        val compress = 1f - (1f - ((if (o.night || o.sunset) 4.6f else 5.2f) / range).coerceIn(0.58f, 1f)) * min(k, 1f)
         val target = fastLog2(if (o.night) 0.30f else 0.43f)
         // Escenas oscuras se aclaran con moderación (que la noche siga pareciendo noche);
         // escenas claras casi no se oscurecen (una pared blanca debe seguir blanca).
         val median = percentile(luma, 0.5f)
-        val maxUp = if (o.night) 1.4f else 0.6f + 0.5f * smooth(0.05f, 0.18f, median)
+        val maxUp = if (o.night || o.sunset) 1.4f else 0.6f + 0.5f * smooth(0.05f, 0.18f, median)
         val exposure = ((target - bm) * 0.75f).coerceIn(-0.1f, maxUp) * min(k, 1f)
         val hiLo = fastLog2(0.30f)
         val hiHi = fastLog2(0.80f)
@@ -187,7 +200,7 @@ object EnhanceCore {
         }
         var wbR = 1f
         var wbB = 1f
-        if (cnt > n / 50 && mr > 0 && mb > 0) {
+        if (!sunsetLike && cnt > n / 50 && mr > 0 && mb > 0) {
             val sWb = (if (o.night) 0.12f else 0.32f) * min(k, 1f)
             wbR = pow(mg / mr, sWb).coerceIn(0.93f, 1.07f)
             wbB = pow(mg / mb, sWb).coerceIn(0.93f, 1.07f)
@@ -195,7 +208,8 @@ object EnhanceCore {
         // Toque cálido muy leve (piel más bonita, como el iPhone)
         wbR *= 1f + 0.012f * min(k, 1f)
         wbB *= 1f - 0.012f * min(k, 1f)
-        val vibrance = (if (o.night) 0.10f else 0.20f) * min(k, 1f)
+        val vibrance = (if (o.night) 0.10f else if (sunsetLike) 0.26f else 0.20f) * min(k, 1f)
+        val protectSkin = !sunsetLike || o.faces.isNotEmpty()
 
         // ---- 4) Ruido: versiones a 1/2 (luz) y 1/4 (color) -------------------
         val half = downLuma(px, w, h, 2)
@@ -289,7 +303,7 @@ object EnhanceCore {
                         if (mx > 1e-3f) {
                             val sat = (mx - mn) / mx
                             var amount = vibrance * (1f - sat)
-                            if (r >= g && g >= b && r - b > 1e-3f) {
+                            if (protectSkin && r >= g && g >= b && r - b > 1e-3f) {
                                 val hue = 60f * (g - b) / (r - b) // 0..60 (rojo → amarillo)
                                 amount *= 1f - 0.75f * bump(hue, 6f, 44f)
                             }

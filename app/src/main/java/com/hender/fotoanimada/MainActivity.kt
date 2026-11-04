@@ -69,7 +69,8 @@ class MainActivity : ComponentActivity() {
 
     enum class Mode(val label: String) {
         TIMELAPSE("TIME-LAPSE"), VIDEO("VIDEO"), PHOTO("FOTO"), EFFECTS("EFECTOS"),
-        PORTRAIT("RETRATO"), NIGHT("NOCHE"), NIGHT_VISION("VISIÓN NOCTURNA"), INSTANT("INSTANTÁNEA")
+        PORTRAIT("RETRATO"), NIGHT("NOCHE"), NIGHT_VISION("VISIÓN NOCTURNA"),
+        SUNSET("ATARDECER"), MOON("LUNA"), INSTANT("INSTANTÁNEA")
     }
 
     private lateinit var previewView: PreviewView
@@ -262,6 +263,7 @@ class MainActivity : ComponentActivity() {
         flashMode = prefs.getString(KEY_FLASH, "off") ?: "off"
         flashColor = prefs.getInt(KEY_FLASH_COLOR, 0xFFFFFFFF.toInt())
         flashButton.setOnClickListener { showFlashMenu() }
+        buildMoonPanel()
 
         // TextureView: permite pintar la vista previa con el filtro en vivo
         previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -270,6 +272,7 @@ class MainActivity : ComponentActivity() {
             if (state == PreviewView.StreamState.STREAMING) {
                 applyPreviewFilter()
                 applyFlash() // la linterna solo prende con la cámara ya activa
+                applyExposure()
                 // El cambio de modo/cámara termina con un desvanecido suave (tipo iPhone)
                 main.postDelayed({ unfreezePreview() }, 120)
             }
@@ -504,6 +507,7 @@ class MainActivity : ComponentActivity() {
         Mode.NIGHT, Mode.NIGHT_VISION -> 2
         Mode.PORTRAIT -> 3
         Mode.EFFECTS -> 4
+        Mode.SUNSET, Mode.MOON -> 5
         else -> 0
     }
 
@@ -795,8 +799,10 @@ class MainActivity : ComponentActivity() {
         centerMode()
         updateResLabel()
         layoutPreview()
-        val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT || mode == Mode.NIGHT_VISION
+        val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT || mode == Mode.NIGHT_VISION ||
+            mode == Mode.SUNSET || mode == Mode.MOON
         updateFlashIcon()
+        moonPanel.visibility = if (mode == Mode.MOON) View.VISIBLE else View.GONE
         formatButton.visibility = if (photoLike) View.VISIBLE else View.GONE
         formatButton.text = CameraSettings.formatLabel(format)
         boomButton.visibility = if (mode == Mode.INSTANT) View.VISIBLE else View.GONE
@@ -822,6 +828,8 @@ class MainActivity : ComponentActivity() {
         val hint = when (mode) {
             Mode.PORTRAIT -> "El fondo se desenfoca al tomar la foto"
             Mode.NIGHT -> "Mantén el cel quieto al disparar"
+            Mode.SUNSET -> "Protege los colores del cielo y aclara la tierra"
+            Mode.MOON -> "Apunta a la luna · apoya el cel · ajusta el brillo abajo"
             Mode.NIGHT_VISION -> "Para ver en lo oscuro · prende la linterna si no hay nada de luz"
             Mode.TIMELAPSE -> "Toca para empezar y para terminar"
             Mode.INSTANT -> when {
@@ -1317,6 +1325,7 @@ class MainActivity : ComponentActivity() {
         when {
             mode == Mode.INSTANT && instantFrame == InstantFrame.BOOTH -> captureBooth()
             mode == Mode.INSTANT && boomKind != "photo" -> captureBoomerang()
+            mode == Mode.MOON -> captureMoon()
             else -> takeStill()
         }
     }
@@ -1533,6 +1542,7 @@ class MainActivity : ComponentActivity() {
         val group = when (mode) {
             Mode.VIDEO -> buildVideoGroup()
             Mode.NIGHT, Mode.NIGHT_VISION -> buildPhotoGroup(night = true, analysis = false)
+            Mode.SUNSET, Mode.MOON -> buildPhotoGroup(night = false, analysis = false)
             Mode.PORTRAIT -> buildPhotoGroup(night = false, analysis = false)
             Mode.EFFECTS -> buildEffectsGroup()
             else -> buildPhotoGroup(night = false, analysis = true)
@@ -1543,6 +1553,7 @@ class MainActivity : ComponentActivity() {
             observeZoom()
             applySmoothFps()
             applyFlash()
+            if (mode == Mode.MOON) main.postDelayed({ animateZoom(minOf(4f, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 4f)) }, 600)
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo abrir la cámara", e)
             showToast("Error de cámara: ${e.message}")
@@ -1609,15 +1620,134 @@ class MainActivity : ComponentActivity() {
             val at30 = ranges.filter { it.upper == 30 }
             val pick = if (lowLight) at30.minByOrNull { it.lower }
             else at30.firstOrNull { it.lower == 30 } ?: at30.maxByOrNull { it.lower }
-            pick ?: return
-            ctl.setCaptureRequestOptions(
-                androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
-                    .setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, pick)
-                    .build()
-            )
+            val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
+            pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+            if (mode == Mode.MOON) {
+                // Enfoque fijo al infinito
+                opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE, android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_OFF)
+                opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+                // Exposición manual (la luna es tan brillante como un día de sol)
+                if (manualSensor()) {
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_MODE, android.hardware.camera2.CameraMetadata.CONTROL_AE_MODE_OFF)
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.SENSOR_SENSITIVITY, 100)
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.SENSOR_EXPOSURE_TIME, moonExposureNs)
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.SENSOR_FRAME_DURATION, 33_333_333L)
+                }
+            }
+            ctl.setCaptureRequestOptions(opts.build())
         } catch (e: Exception) {
             Log.w(TAG, "No se pudo fijar los fps", e)
         }
+    }
+
+    // ---------- Luna y atardecer ----------
+
+    private var moonExposureNs = 700_000L // 1/1400 s
+    private lateinit var moonPanel: LinearLayout
+
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    private fun manualSensor(): Boolean = try {
+        val caps = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera!!.cameraInfo)
+            .getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+        caps?.contains(android.hardware.camera2.CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Compensación de exposición: más oscuro en atardecer (cielo con color) y luna sin control manual. */
+    private fun applyExposure() {
+        val cam = camera ?: return
+        val st = cam.cameraInfo.exposureState
+        if (!st.isExposureCompensationSupported) return
+        val step = st.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: return
+        val idx = when {
+            mode == Mode.SUNSET -> (-1f / step).roundToIntSafe()
+            mode == Mode.MOON && !manualSensor() -> st.exposureCompensationRange.lower
+            else -> 0
+        }.coerceIn(st.exposureCompensationRange.lower, st.exposureCompensationRange.upper)
+        try {
+            cam.cameraControl.setExposureCompensationIndex(idx)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun Float.roundToIntSafe() = kotlin.math.round(this).toInt()
+
+    private fun buildMoonPanel() {
+        val parent = findViewById<View>(R.id.zoomBar).parent as FrameLayout
+        moonPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundResource(R.drawable.bg_panel)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            visibility = View.GONE
+        }
+        moonPanel.addView(TextView(this).apply {
+            text = "Brillo de la luna"
+            textSize = 12f
+            setTextColor(0xE6FFFFFF.toInt())
+        })
+        val bar = android.widget.SeekBar(this).apply {
+            max = 100
+            progress = 50
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar, p: Int, fromUser: Boolean) {
+                    // De 1/6000 s a 1/120 s (escala logarítmica)
+                    val t = p / 100.0
+                    moonExposureNs = (1_000_000_000.0 / (6000.0 * Math.pow(120.0 / 6000.0, t))).toLong()
+                    applySmoothFps()
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar) {}
+            })
+        }
+        moonPanel.addView(bar, LinearLayout.LayoutParams(0, dp(36), 1f))
+        parent.addView(moonPanel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = android.view.Gravity.BOTTOM
+            setMargins(dp(20), 0, dp(20), dp(116))
+        })
+    }
+
+    /** 6 fotos seguidas de la luna, luego se alinean y se juntan. */
+    private fun captureMoon() {
+        if (busy || imageCapture == null) return
+        busy = true
+        showToast("Quieto… tomando 6 fotos")
+        val shots = ArrayList<ByteArray>()
+        fun next(i: Int) {
+            if (i == 6) {
+                busy = false
+                showToast("Juntando las fotos de la luna…")
+                saveExecutor.execute { saveMoon(shots) }
+                return
+            }
+            sound.play(MediaActionSound.SHUTTER_CLICK)
+            grab { b ->
+                runOnUiThread {
+                    if (b != null) shots += b
+                    main.postDelayed({ next(i + 1) }, 120)
+                }
+            }
+        }
+        // Un momento para que el cel deje de moverse después del toque
+        main.postDelayed({ next(0) }, 500)
+    }
+
+    private fun saveMoon(shots: List<ByteArray>) {
+        if (shots.isEmpty()) {
+            finishSave("No se pudo tomar la foto de la luna")
+            return
+        }
+        val msg = try {
+            val bmp = Astro.stackMoon(shots)
+            MotionPhotoWriter.save(this, Processing.encode(bmp, 95), null, "_LUNA")
+            bmp.recycle()
+            null
+        } catch (e: Throwable) {
+            Log.e(TAG, "Luna", e)
+            "Error: ${e.message}"
+        }
+        finishSave(msg)
     }
 
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
@@ -1845,6 +1975,9 @@ class MainActivity : ComponentActivity() {
                     Mode.INSTANT -> saveInstant(p)
                     Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") { Processing.portrait(Enhance.jpeg(this, it), currentFilter) }
                     Mode.EFFECTS -> saveEffectPhoto(p, front)
+                    Mode.SUNSET -> saveProcessed(p, "_ATARDECER") {
+                        MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, sunset = true), currentFilter)
+                    }
                     Mode.NIGHT_VISION -> saveProcessed(p, "_NOCTURNA") {
                         val b = Processing.decode(Enhance.jpeg(this, it, night = true), 4096)
                         val nv = InstantFx.nightVision(b)
