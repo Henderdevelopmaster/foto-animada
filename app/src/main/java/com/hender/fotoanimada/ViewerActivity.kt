@@ -654,8 +654,16 @@ class ViewerActivity : ComponentActivity() {
     /** Prepara la foto animada en el formato elegido y abre el menú de compartir. */
     private fun shareAs(item: MediaRepo.Item, kind: String) {
         prefs.edit().putString(KEY_SHARE, kind).apply()
-        if (kind == "photo") {
-            sendUri(item.uri, "image/jpeg")
+        prepare(item, kind) { uri -> sendUri(uri, if (kind == "gif") "image/gif" else if (kind == "photo") "image/jpeg" else "video/mp4") }
+    }
+
+    /**
+     * Deja el archivo listo en el formato pedido (video, 9:16, GIF o la foto tal cual)
+     * y lo entrega. Lo exportado queda también guardado en la galería.
+     */
+    private fun prepare(item: MediaRepo.Item, kind: String, onReady: (android.net.Uri) -> Unit) {
+        if (kind == "photo" || item.isVideo || !item.isLive) {
+            onReady(item.uri)
             return
         }
         showBusy(if (kind == "gif") "Creando GIF…" else "Creando video…")
@@ -699,8 +707,81 @@ class ViewerActivity : ComponentActivity() {
             runOnUiThread {
                 showBusy(null)
                 val u = uri
-                if (u != null) sendUri(u, if (kind == "gif") "image/gif" else "video/mp4")
-                else msg?.let { say(it) }
+                if (u != null) onReady(u) else msg?.let { say(it) }
+            }
+        }
+    }
+
+    // ---------- Seguir editando en otra app ----------
+
+    /** CapCut internacional y la versión china (Jianying). */
+    private val capcutPkgs = listOf("com.lemon.lvoverseas", "com.lemon.lv")
+
+    private fun installedEditor() = capcutPkgs.firstOrNull {
+        try {
+            packageManager.getPackageInfo(it, 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun showEditMenu(item: MediaRepo.Item) {
+        val has = installedEditor() != null
+        val actions = mutableListOf<Sheet.Item>()
+        if (item.isLive || item.isVideo) {
+            actions += Sheet.Item(
+                if (has) "Abrir en CapCut" else "Instalar CapCut",
+                R.drawable.ic_export_video,
+                subtitle = if (has) "Se manda como video" else "No lo tienes instalado",
+            ) { openInCapCut(item) }
+        }
+        actions += Sheet.Item("Otra app de edición", R.drawable.ic_tune,
+            subtitle = "Elige entre las que tengas") { openInOther(item) }
+        Sheet.actions(this, "Seguir editando", actions)
+    }
+
+    private fun openInCapCut(item: MediaRepo.Item) {
+        val pkg = installedEditor()
+        if (pkg == null) {
+            val id = capcutPkgs[0]
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=$id")))
+            } catch (_: Exception) {
+                startActivity(Intent(Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://play.google.com/store/apps/details?id=$id")))
+            }
+            return
+        }
+        prepare(item, "video") { uri ->
+            val send = Intent(Intent.ACTION_SEND).apply {
+                setPackage(pkg)
+                type = "video/mp4"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            try {
+                startActivity(send)
+            } catch (e: Exception) {
+                // Si CapCut no acepta el envío, queda el menú normal
+                sendUri(uri, "video/mp4")
+            }
+        }
+    }
+
+    private fun openInOther(item: MediaRepo.Item) {
+        val kind = if (item.isLive || item.isVideo) "video" else "photo"
+        prepare(item, kind) { uri ->
+            val mime = if (kind == "video") "video/mp4" else "image/jpeg"
+            val edit = Intent(Intent.ACTION_EDIT).apply {
+                setDataAndType(uri, mime)
+                putExtra("mimeType", mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            try {
+                startActivity(Intent.createChooser(edit, "Editar con"))
+            } catch (e: Exception) {
+                sendUri(uri, mime)
             }
         }
     }
@@ -791,7 +872,8 @@ class ViewerActivity : ComponentActivity() {
             actions += Sheet.Item("Exportar como video", R.drawable.ic_export_video) { exportVideo(item) }
             actions += Sheet.Item("Exportar como GIF", R.drawable.ic_gif) { exportGif(item) }
         }
-        if (actions.isEmpty()) return
+        actions += Sheet.Item("Seguir editando en otra app", R.drawable.ic_wand,
+            subtitle = "CapCut y las demás") { showEditMenu(item) }
         Sheet.actions(this, null, actions)
     }
 

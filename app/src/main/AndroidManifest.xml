@@ -15,6 +15,20 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Para poder ver si CapCut está instalado y mandarle el video -->
+    <queries>
+        <package android:name="com.lemon.lvoverseas" />
+        <package android:name="com.lemon.lv" />
+        <intent>
+            <action android:name="android.intent.action.EDIT" />
+            <data android:mimeType="video/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.EDIT" />
+            <data android:mimeType="image/*" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:largeHeap="true"
