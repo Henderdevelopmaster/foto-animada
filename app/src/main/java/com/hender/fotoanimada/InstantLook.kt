@@ -23,6 +23,8 @@ enum class InstantLook(
     val leak: Boolean,
     val vignette: Float,
     val flash: Boolean,
+    /** Necesita cálculo por píxel (ver [InstantFx]), no solo color. */
+    val fx: Boolean = false,
 ) {
     NONE("none", "Sin filtro", 0f, false, 0f, false),
     INSTAX("instax", "Instax", 0.05f, false, 0.25f, false),
@@ -30,7 +32,11 @@ enum class InstantLook(
     FLASH("flash", "Flash", 0.04f, false, 0.5f, true),
     FILM("film", "Rollo 400", 0.09f, false, 0.3f, false),
     BN("bn", "B/N rollo", 0.1f, false, 0.4f, false),
-    SUNSET("sunset", "Atardecer", 0.06f, true, 0.3f, false);
+    SUNSET("sunset", "Atardecer", 0.06f, true, 0.3f, false),
+    PIXEL("pixel", "Pixelado", 0f, false, 0f, false, fx = true),
+    VHS("vhs", "VHS", 0.06f, false, 0.3f, false, fx = true),
+    COMIC("comic", "Cómic", 0f, false, 0f, false, fx = true),
+    LEAK("leak", "Fuga de luz", 0.05f, false, 0.25f, false, fx = true);
 
     fun matrix(): ColorMatrix {
         val m = ColorMatrix()
@@ -54,6 +60,11 @@ enum class InstantLook(
             SUNSET -> {
                 m.postConcat(scale(1.12f, 1.0f, 0.82f)); m.postConcat(sat(1.15f)); m.postConcat(lift(8f))
             }
+            // Aproximaciones de color para la vista previa en cels sin shaders
+            PIXEL -> { m.postConcat(contrast(1.12f)); m.postConcat(sat(1.2f)) }
+            VHS -> { m.postConcat(sat(0.82f)); m.postConcat(lift(14f)); m.postConcat(scale(1.0f, 0.98f, 1.05f)) }
+            COMIC -> { m.postConcat(contrast(1.35f)); m.postConcat(sat(1.4f)) }
+            LEAK -> { m.postConcat(scale(1.1f, 1.0f, 0.9f)); m.postConcat(lift(16f)) }
         }
         return m
     }
@@ -62,9 +73,14 @@ enum class InstantLook(
 
     /** Aplica el look completo (color + viñeta + flash + luz quemada + grano). */
     fun apply(src: Bitmap): Bitmap {
-        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val out: Bitmap
+        if (fx) {
+            out = InstantFx.render(this, src)
+        } else {
+            out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            Canvas(out).drawBitmap(src, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = colorFilter() })
+        }
         val c = Canvas(out)
-        c.drawBitmap(src, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = colorFilter() })
         if (this == NONE) return out
         val w = out.width.toFloat()
         val h = out.height.toFloat()

@@ -42,16 +42,26 @@ object CameraSettings {
     const val VIDEO = "video_res"
     const val LIVE = "live_res"
     const val EFFECTS = "effects_res"
+    const val ENHANCE = "enhance"
+    const val FORMAT = "format"
+
+    /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
+    val formats = listOf("4:3", "16:9", "1:1", "full")
+    fun format(c: Context) = get(c, FORMAT, "4:3").let { if (it in formats) it else "4:3" }
+    fun formatLabel(f: String) = if (f == "full") "Completa" else f
 
     fun photo(c: Context) = get(c, PHOTO, "12")
     fun video(c: Context) = get(c, VIDEO, "fhd")
     fun live(c: Context) = get(c, LIVE, "960")
     fun effects(c: Context) = get(c, EFFECTS, "720")
 
-    /** Selector de resolución para la foto (4:3). */
-    fun photoSelector(c: Context): ResolutionSelector {
+    /** Selector de resolución para la foto (4:3, o 16:9 para formatos alargados). */
+    fun photoSelector(c: Context, wide: Boolean = false): ResolutionSelector {
         val b = ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(
+                if (wide) AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                else AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+            )
         when (photo(c)) {
             "max" -> {
                 b.setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)

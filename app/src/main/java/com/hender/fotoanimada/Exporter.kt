@@ -139,6 +139,75 @@ object Exporter {
         }
     }
 
+    /**
+     * Arma un MP4 (sin sonido) dibujando cada fotograma con [draw].
+     * Lo usa el boomerang de las instantáneas.
+     */
+    fun renderMp4(w0: Int, h0: Int, fps: Float, count: Int, out: File, draw: (Canvas, Int, Rect) -> Unit) {
+        val w = (w0 / 16) * 16
+        val h = (h0 / 16) * 16
+        val fmt = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, 8_000_000)
+            setInteger(MediaFormat.KEY_FRAME_RATE, fps.toInt().coerceAtLeast(1))
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+        val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        enc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val surface = enc.createInputSurface()
+        enc.start()
+        out.delete()
+        val muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var track = -1
+        var written = 0
+        val frameUs = (1_000_000f / fps).toLong()
+        val info = MediaCodec.BufferInfo()
+        val dst = Rect(0, 0, w, h)
+
+        fun drain(end: Boolean) {
+            while (true) {
+                val o = enc.dequeueOutputBuffer(info, if (end) 10_000 else 0)
+                when {
+                    o == MediaCodec.INFO_TRY_AGAIN_LATER -> if (!end) return
+                    o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        track = muxer.addTrack(enc.outputFormat)
+                        muxer.start()
+                    }
+                    o >= 0 -> {
+                        val buf = enc.getOutputBuffer(o)!!
+                        val config = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                        if (!config && info.size > 0 && track >= 0) {
+                            info.presentationTimeUs = written * frameUs
+                            written++
+                            muxer.writeSampleData(track, buf, info)
+                        }
+                        enc.releaseOutputBuffer(o, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
+                    }
+                }
+            }
+        }
+
+        try {
+            for (i in 0 until count) {
+                val canvas = surface.lockHardwareCanvas()
+                canvas.drawColor(Color.BLACK)
+                draw(canvas, i, dst)
+                surface.unlockCanvasAndPost(canvas)
+                Thread.sleep(8)
+                drain(false)
+            }
+            enc.signalEndOfInputStream()
+            drain(true)
+        } finally {
+            enc.stop()
+            enc.release()
+            surface.release()
+            if (track >= 0) muxer.stop()
+            muxer.release()
+        }
+    }
+
     /** Convierte fotogramas en un GIF animado que se repite siempre. */
     fun framesToGif(frames: Frames, bounce: Boolean, filter: PhotoFilter, out: File, maxSide: Int = 360) {
         val src = frames.bitmaps.first()

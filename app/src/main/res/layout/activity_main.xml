@@ -1,16 +1,81 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    android:orientation="vertical">
+    android:background="#000000">
+
+    <!-- Lo que ve la cámara: su tamaño cambia según el formato (4:3, 16:9, 1:1, completa) -->
+    <FrameLayout
+        android:id="@+id/previewBox"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top|center_horizontal">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <TextureView
+            android:id="@+id/effectView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.hender.fotoanimada.FaceOverlayView
+            android:id="@+id/faceOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.hender.fotoanimada.GridOverlay
+            android:id="@+id/gridOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.hender.fotoanimada.ShapeMaskView
+            android:id="@+id/shapeMask"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <View
+            android:id="@+id/focusRing"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:alpha="0"
+            android:background="@drawable/focus_ring" />
+
+        <View
+            android:id="@+id/flash"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0"
+            android:background="#000000" />
+
+        <ImageView
+            android:id="@+id/switchShot"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/chrome"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
     <!-- Barra superior -->
     <FrameLayout
+        android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="64dp"
-        android:layout_marginTop="24dp"
+        android:layout_height="88dp"
+        android:paddingTop="24dp"
         android:paddingHorizontal="16dp">
 
         <ImageButton
@@ -38,6 +103,20 @@
             android:layout_gravity="end|center_vertical"
             android:gravity="center_vertical"
             android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/formatButton"
+                android:layout_width="wrap_content"
+                android:layout_height="26dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_res_pill"
+                android:gravity="center"
+                android:letterSpacing="0.05"
+                android:minWidth="44dp"
+                android:paddingHorizontal="9dp"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/resButton"
@@ -83,6 +162,16 @@
             android:background="?android:attr/selectableItemBackgroundBorderless"
             android:contentDescription="Activar o desactivar LIVE"
             android:src="@drawable/ic_live_on" />
+
+        <ImageButton
+            android:id="@+id/boomButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Foto o boomerang"
+            android:src="@drawable/ic_bounce"
+            android:visibility="gone" />
     </FrameLayout>
 
     <!-- Visor -->
@@ -91,23 +180,8 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <androidx.camera.view.PreviewView
-            android:id="@+id/preview"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            app:scaleType="fitStart" />
 
-        <TextureView
-            android:id="@+id/effectView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
 
-        <com.hender.fotoanimada.FaceOverlayView
-            android:id="@+id/faceOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
 
         <LinearLayout
             android:id="@+id/beautyPanel"
@@ -124,18 +198,7 @@
             android:paddingTop="14dp"
             android:visibility="gone" />
 
-        <com.hender.fotoanimada.GridOverlay
-            android:id="@+id/gridOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
 
-        <View
-            android:id="@+id/focusRing"
-            android:layout_width="64dp"
-            android:layout_height="64dp"
-            android:alpha="0"
-            android:background="@drawable/focus_ring" />
 
         <TextView
             android:id="@+id/countdown"
@@ -195,29 +258,8 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Guías del modo instantánea (cuadrado) -->
-        <View
-            android:id="@+id/instantMaskTop"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_gravity="top"
-            android:background="#B3000000"
-            android:visibility="gone" />
 
-        <View
-            android:id="@+id/instantMaskBottom"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_gravity="top"
-            android:background="#B3000000"
-            android:visibility="gone" />
 
-        <View
-            android:id="@+id/flash"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:alpha="0"
-            android:background="#000000" />
 
         <TextView
             android:id="@+id/livePill"
@@ -247,24 +289,41 @@
             android:textColor="#FFFFFF"
             android:textSize="13sp" />
 
-        <HorizontalScrollView
+        <LinearLayout
             android:id="@+id/filterBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
             android:background="@drawable/bg_filter_bar"
+            android:orientation="vertical"
             android:paddingBottom="10dp"
-            android:paddingTop="26dp"
-            android:scrollbars="none"
+            android:paddingTop="20dp"
             android:visibility="gone">
 
             <LinearLayout
-                android:id="@+id/filterList"
+                android:id="@+id/instantTabs"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_height="34dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_segmented"
                 android:orientation="horizontal"
-                android:paddingHorizontal="12dp" />
-        </HorizontalScrollView>
+                android:padding="3dp"
+                android:visibility="gone" />
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/filterList"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp" />
+            </HorizontalScrollView>
+        </LinearLayout>
 
         <!-- Revelado de la instantánea -->
         <FrameLayout
@@ -273,6 +332,17 @@
             android:layout_height="match_parent"
             android:background="#CC000000"
             android:visibility="gone">
+
+            <TextView
+                android:id="@+id/developHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginTop="2dp"
+                android:text="Sacude el cel para revelarla"
+                android:textColor="#CCFFFFFF"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
             <ImageView
                 android:id="@+id/developImage"
@@ -368,6 +438,7 @@
 
     <!-- Panel inferior -->
     <LinearLayout
+        android:id="@+id/bottomPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -453,4 +524,5 @@
                 android:src="@drawable/ic_flip" />
         </FrameLayout>
     </LinearLayout>
-</LinearLayout>
+    </LinearLayout>
+</FrameLayout>
