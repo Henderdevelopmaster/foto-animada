@@ -361,29 +361,23 @@ class ViewerActivity : ComponentActivity() {
 
     private fun showFxMenu() {
         val item = items.getOrNull(current) ?: return
-        val menu = PopupMenu(this, fxChip)
-        val options = if (item.isLive)
-            listOf(Fx.LIVE, Fx.LOOP, Fx.BOUNCE, Fx.LONG, Fx.OFF)
-        else
-            listOf(Fx.STILL, Fx.ANIMATE)
-        val names = mapOf(
-            Fx.LIVE to "Live", Fx.LOOP to "Bucle", Fx.BOUNCE to "Rebote",
-            Fx.LONG to "Exposición larga", Fx.OFF to "Desactivado",
-            Fx.STILL to "Foto normal", Fx.ANIMATE to "Animar",
-        )
         val selected = fxOf(item)
-        options.forEachIndexed { i, fx ->
-            val label = (if (fx == selected) "✓  " else "     ") + names[fx]
-            menu.menu.add(Menu.NONE, i, i, label)
-        }
-        menu.setOnMenuItemClickListener { mi ->
-            val fx = options[mi.itemId]
+        fun pick(fx: Fx) {
             prefs.edit().putString("fx_${item.id}", fx.name).apply()
             fxChip.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
             applyEffect()
-            true
         }
-        menu.show()
+        val options = if (item.isLive) listOf(
+            Sheet.Item("Live", R.drawable.ic_live_small, selected == Fx.LIVE, subtitle = "Mantén presionado para verla moverse") { pick(Fx.LIVE) },
+            Sheet.Item("Bucle", R.drawable.ic_loop, selected == Fx.LOOP, subtitle = "Se repite sin parar") { pick(Fx.LOOP) },
+            Sheet.Item("Rebote", R.drawable.ic_bounce, selected == Fx.BOUNCE, subtitle = "Va y vuelve") { pick(Fx.BOUNCE) },
+            Sheet.Item("Exposición larga", R.drawable.ic_long_exposure, selected == Fx.LONG, subtitle = "Mezcla el movimiento en una foto") { pick(Fx.LONG) },
+            Sheet.Item("Desactivado", R.drawable.ic_off, selected == Fx.OFF, subtitle = "Solo la foto") { pick(Fx.OFF) },
+        ) else listOf(
+            Sheet.Item("Foto normal", R.drawable.ic_photo, selected == Fx.STILL) { pick(Fx.STILL) },
+            Sheet.Item("Animar", R.drawable.ic_animate, selected == Fx.ANIMATE, subtitle = "Zoom y paneo lento") { pick(Fx.ANIMATE) },
+        )
+        Sheet.actions(this, if (item.isLive) "Efecto Live" else "Efecto", options)
     }
 
     private fun withFrames(item: MediaRepo.Item, onReady: (Frames?) -> Unit) {
@@ -713,20 +707,18 @@ class ViewerActivity : ComponentActivity() {
 
     private fun showMoreMenu(anchor: View) {
         val item = items.getOrNull(current) ?: return
-        val menu = PopupMenu(this, anchor)
-        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        val actions = mutableListOf<Sheet.Item>()
         if (!item.isVideo) {
-            actions += "Texto en vivo" to { runOcr(item) }
-            actions += "Recortar sujeto" to { runSegmentation(item) }
+            actions += Sheet.Item("Texto en vivo", R.drawable.ic_text_scan, subtitle = "Copia el texto de la foto") { runOcr(item) }
+            actions += Sheet.Item("Recortar sujeto", R.drawable.ic_cutout, subtitle = "Separa a la persona del fondo") { runSegmentation(item) }
         }
         if (item.isLive) {
-            actions += "Elegir portada" to { openKeyPanel(item) }
-            actions += "Exportar como video" to { exportVideo(item) }
-            actions += "Exportar como GIF" to { exportGif(item) }
+            actions += Sheet.Item("Elegir portada", R.drawable.ic_cover) { openKeyPanel(item) }
+            actions += Sheet.Item("Exportar como video", R.drawable.ic_export_video) { exportVideo(item) }
+            actions += Sheet.Item("Exportar como GIF", R.drawable.ic_gif) { exportGif(item) }
         }
-        actions.forEachIndexed { i, a -> menu.menu.add(Menu.NONE, i, i, a.first) }
-        menu.setOnMenuItemClickListener { actions[it.itemId].second(); true }
-        menu.show()
+        if (actions.isEmpty()) return
+        Sheet.actions(this, null, actions)
     }
 
     private fun showBusy(text: String?) {
@@ -761,19 +753,19 @@ class ViewerActivity : ComponentActivity() {
             this.text = text
             setTextIsSelectable(true)
             textSize = 16f
+            setLineSpacing(0f, 1.15f)
             setTextColor(0xFFFFFFFF.toInt())
-            setPadding(dp(22), dp(12), dp(22), dp(12))
+            setBackgroundResource(R.drawable.bg_segmented)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
         }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Texto en la foto")
-            .setView(ScrollView(this).apply { addView(tv) })
-            .setPositiveButton("Copiar todo") { _, _ ->
+        Sheet.custom(this, "Texto en la foto", tv, listOf(
+            "Copiar todo" to {
                 val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("Texto", text))
                 say("Texto copiado")
-            }
-            .setNegativeButton("Cerrar", null)
-            .show()
+            },
+            "Cerrar" to {},
+        ), primary = 0, scroll = text.length > 300)
     }
 
     // Recortar sujeto (ML Kit Subject Segmentation)
@@ -804,13 +796,13 @@ class ViewerActivity : ComponentActivity() {
         val iv = ImageView(this).apply {
             setImageBitmap(bmp)
             adjustViewBounds = true
-            setBackgroundColor(0xFF3A3A3A.toInt())
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundResource(R.drawable.bg_checker)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            maxHeight = dp(360)
         }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Sujeto recortado")
-            .setView(iv)
-            .setPositiveButton("Compartir") { _, _ ->
+        Sheet.custom(this, "Sujeto recortado", iv, listOf(
+            "Compartir" to {
                 io.execute {
                     val uri = Exporter.savePng(this, bmp, "RECORTE")
                     runOnUiThread {
@@ -822,15 +814,14 @@ class ViewerActivity : ComponentActivity() {
                         startActivity(Intent.createChooser(send, "Compartir recorte"))
                     }
                 }
-            }
-            .setNegativeButton("Guardar") { _, _ ->
+            },
+            "Guardar" to {
                 io.execute {
                     Exporter.savePng(this, bmp, "RECORTE")
                     runOnUiThread { say("Recorte guardado en la galería") }
                 }
-            }
-            .setNeutralButton("Cerrar", null)
-            .show()
+            },
+        ), primary = 1)
     }
 
     // Exportar

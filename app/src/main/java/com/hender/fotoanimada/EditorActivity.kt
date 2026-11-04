@@ -137,11 +137,15 @@ class EditorActivity : ComponentActivity() {
     }
 
     private fun buildTabs() {
+        val icons = listOf(R.drawable.ic_tune, R.drawable.ic_filters, R.drawable.ic_crop)
         listOf("Ajustar", "Filtros", "Recortar").forEachIndexed { i, label ->
             val tv = TextView(this).apply {
                 text = label
-                textSize = 14f
-                setPadding(dp(18), dp(8), dp(18), dp(8))
+                textSize = 12f
+                gravity = android.view.Gravity.CENTER
+                compoundDrawablePadding = dp(4)
+                setCompoundDrawablesRelativeWithIntrinsicBounds(0, icons[i], 0, 0)
+                setPadding(dp(22), dp(6), dp(22), dp(6))
                 setOnClickListener { showTab(i) }
             }
             tabs.addView(tv)
@@ -153,7 +157,10 @@ class EditorActivity : ComponentActivity() {
         filterPanel.visibility = if (i == 1) View.VISIBLE else View.GONE
         cropPanel.visibility = if (i == 2) View.VISIBLE else View.GONE
         for (k in 0 until tabs.childCount) {
-            (tabs.getChildAt(k) as TextView).setTextColor(if (k == i) 0xFF00E676.toInt() else 0x99FFFFFF.toInt())
+            val t = tabs.getChildAt(k) as TextView
+            val col = if (k == i) 0xFF00E676.toInt() else 0x99FFFFFF.toInt()
+            t.setTextColor(col)
+            t.compoundDrawablesRelative[1]?.setTint(col)
         }
     }
 

@@ -422,25 +422,50 @@ class MainActivity : ComponentActivity() {
     fun buildEffects() {
         effects = EffectStore.all(this)
         effectList.removeAllViews()
-        val size = dp(52)
+        val size = dp(54)
         for (fx in effects) {
-            val tv = TextView(this).apply {
-                text = fx.emoji
-                textSize = 24f
-                gravity = android.view.Gravity.CENTER
-                setBackgroundResource(R.drawable.bg_effect)
+            val cell = FrameLayout(this).apply {
                 tag = fx.id
+                setBackgroundResource(R.drawable.bg_effect)
                 setOnClickListener { selectEffect(fx.id, true) }
+                if (fx.custom || !fx.base.startsWith("asset:")) {
+                    setOnLongClickListener {
+                        it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        Sheet.actions(this@MainActivity, fx.name, listOf(
+                            Sheet.Item("Quitar este efecto", R.drawable.ic_delete, destructive = true) {
+                                EffectStore.forget(fx.base)
+                                java.io.File(fx.base).deleteRecursively()
+                                if (effectId == fx.id) effectId = "none"
+                                buildEffects()
+                            }
+                        ), subtitle = if (fx.custom) "Creado por ti" else "De la biblioteca")
+                        true
+                    }
+                }
+            }
+            val iconBmp = fx.icon?.let { EffectStore.image(this, fx.base, it) }
+            if (iconBmp != null) {
+                cell.addView(ImageView(this).apply {
+                    setImageBitmap(iconBmp)
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setPadding(dp(3), dp(3), dp(3), dp(3))
+                }, FrameLayout.LayoutParams(size, size))
+            } else {
+                cell.addView(TextView(this).apply {
+                    text = fx.emoji
+                    textSize = 24f
+                    gravity = android.view.Gravity.CENTER
+                }, FrameLayout.LayoutParams(size, size))
             }
             val lp = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
-            effectList.addView(tv, lp)
+            effectList.addView(cell, lp)
         }
         val more = TextView(this).apply {
             text = "＋"
-            textSize = 24f
+            textSize = 26f
             gravity = android.view.Gravity.CENTER
             setTextColor(0xFF00E676.toInt())
-            setBackgroundResource(R.drawable.bg_effect)
+            setBackgroundResource(R.drawable.bg_effect_more)
             setOnClickListener {
                 libraryLauncher.launch(Intent(this@MainActivity, EffectsLibraryActivity::class.java))
             }
@@ -452,6 +477,12 @@ class MainActivity : ComponentActivity() {
     private val libraryLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { buildEffects() }
 
+    override fun onRestart() {
+        super.onRestart()
+        // Pudo crear o descargar efectos desde otra pantalla
+        if (mode == Mode.EFFECTS) buildEffects()
+    }
+
     private fun selectEffect(id: String, user: Boolean) {
         val fx = effects.firstOrNull { it.id == id } ?: effects.firstOrNull() ?: return
         effectId = fx.id
@@ -461,8 +492,9 @@ class MainActivity : ComponentActivity() {
         for (i in 0 until effectList.childCount) {
             val v = effectList.getChildAt(i)
             v.isSelected = v.tag == fx.id
-            v.scaleX = if (v.isSelected) 1.15f else 1f
-            v.scaleY = v.scaleX
+            val target = if (v.isSelected) 1.14f else 1f
+            if (user) v.animate().scaleX(target).scaleY(target).setDuration(140).start()
+            else { v.scaleX = target; v.scaleY = target }
         }
         effectName.text = fx.name
         if (user) {
@@ -559,7 +591,8 @@ class MainActivity : ComponentActivity() {
                 text = m.label
                 textSize = 14f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
-                setPadding(dp(13), dp(4), dp(13), dp(4))
+                setPadding(dp(14), dp(6), dp(14), dp(6))
+                letterSpacing = 0.04f
                 tag = m
                 setOnClickListener { setMode(m) }
             }
@@ -585,7 +618,9 @@ class MainActivity : ComponentActivity() {
         val white = 0xCCFFFFFF.toInt()
         for (i in 0 until modeList.childCount) {
             val v = modeList.getChildAt(i) as TextView
-            v.setTextColor(if (v.tag == mode) green else white)
+            val on = v.tag == mode
+            v.setTextColor(if (on) green else white)
+            v.setBackgroundResource(if (on) R.drawable.bg_mode_selected else 0)
         }
         centerMode()
         updateResLabel()

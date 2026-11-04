@@ -1,0 +1,5 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <bitmap android:src="@drawable/checker_tile" android:tileMode="repeat" />
+    </item>
+</layer-list>

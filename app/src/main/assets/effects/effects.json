@@ -2,7 +2,9 @@
  {
   "id": "none",
   "name": "Normal",
-  "emoji": "🚫"
+  "emoji": "🚫",
+  "icon": "icon_none.png",
+  "category": "Clásicos"
  },
  {
   "id": "perrito",
@@ -36,7 +38,9 @@
     "offsetY": 0.2,
     "trigger": "mouthOpen"
    }
-  ]
+  ],
+  "icon": "icon_perrito.png",
+  "category": "Clásicos"
  },
  {
   "id": "gatito",
@@ -65,7 +69,9 @@
     "anchor": "rightCheek",
     "width": 0.42
    }
-  ]
+  ],
+  "icon": "icon_gatito.png",
+  "category": "Clásicos"
  },
  {
   "id": "lentes",
@@ -78,7 +84,9 @@
     "width": 1.0,
     "offsetY": 0.02
    }
-  ]
+  ],
+  "icon": "icon_lentes.png",
+  "category": "Clásicos"
  },
  {
   "id": "rey",
@@ -91,7 +99,9 @@
     "width": 0.8,
     "offsetY": 0.2
    }
-  ]
+  ],
+  "icon": "icon_rey.png",
+  "category": "Clásicos"
  },
  {
   "id": "bigote",
@@ -104,7 +114,9 @@
     "width": 0.62,
     "offsetY": -0.02
    }
-  ]
+  ],
+  "icon": "icon_bigote.png",
+  "category": "Clásicos"
  },
  {
   "id": "corazones",
@@ -126,7 +138,9 @@
    "image": "heart.png",
    "size": 0.16,
    "rate": 3
-  }
+  },
+  "icon": "icon_corazones.png",
+  "category": "Clásicos"
  },
  {
   "id": "ojotes",
@@ -135,7 +149,9 @@
   "warp": {
    "type": "bigEyes",
    "strength": 0.55
-  }
+  },
+  "icon": "icon_ojotes.png",
+  "category": "Clásicos"
  },
  {
   "id": "carafina",
@@ -145,13 +161,17 @@
    "type": "slim",
    "strength": 0.5
   },
-  "filter": "vivid"
+  "filter": "vivid",
+  "icon": "icon_carafina.png",
+  "category": "Clásicos"
  },
  {
   "id": "glitch",
   "name": "Glitch",
   "emoji": "📺",
-  "glitch": true
+  "glitch": true,
+  "icon": "icon_glitch.png",
+  "category": "Clásicos"
  },
  {
   "id": "vhs",
@@ -159,13 +179,17 @@
   "emoji": "📼",
   "filter": "vintage",
   "scanlines": true,
-  "glitch": true
+  "glitch": true,
+  "icon": "icon_vhs.png",
+  "category": "Clásicos"
  },
  {
   "id": "espejo",
   "name": "Espejo",
   "emoji": "🪞",
-  "mirror": true
+  "mirror": true,
+  "icon": "icon_espejo.png",
+  "category": "Clásicos"
  },
  {
   "id": "brillitos",
@@ -176,6 +200,8 @@
    "size": 0.12,
    "rate": 5
   },
-  "filter": "warm"
+  "filter": "warm",
+  "icon": "icon_brillitos.png",
+  "category": "Clásicos"
  }
 ]
