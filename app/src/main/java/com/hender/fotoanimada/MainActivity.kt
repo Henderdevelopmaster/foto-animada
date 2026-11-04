@@ -1326,6 +1326,7 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT && instantFrame == InstantFrame.BOOTH -> captureBooth()
             mode == Mode.INSTANT && boomKind != "photo" -> captureBoomerang()
             mode == Mode.MOON -> captureMoon()
+            mode == Mode.SUNSET -> captureSunset()
             else -> takeStill()
         }
     }
@@ -1642,7 +1643,7 @@ class MainActivity : ComponentActivity() {
 
     // ---------- Luna y atardecer ----------
 
-    private var moonExposureNs = 700_000L // 1/1400 s
+    private var moonExposureNs = 400_000L // 1/2500 s
     private lateinit var moonPanel: LinearLayout
 
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
@@ -1689,7 +1690,7 @@ class MainActivity : ComponentActivity() {
         })
         val bar = android.widget.SeekBar(this).apply {
             max = 100
-            progress = 50
+            progress = 25
             setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: android.widget.SeekBar, p: Int, fromUser: Boolean) {
                     // De 1/6000 s a 1/120 s (escala logarítmica)
@@ -1706,6 +1707,109 @@ class MainActivity : ComponentActivity() {
             gravity = android.view.Gravity.BOTTOM
             setMargins(dp(20), 0, dp(20), dp(116))
         })
+    }
+
+    /**
+     * Atardecer: tres fotos seguidas (oscura, normal y clara) que luego se juntan.
+     * El cielo y el sol salen de la oscura, y la tierra de la clara.
+     */
+    private fun captureSunset() {
+        val cam = camera
+        if (busy || imageCapture == null || cam == null) return
+        val st = cam.cameraInfo.exposureState
+        val step = st.exposureCompensationStep.toFloat()
+        if (!st.isExposureCompensationSupported || step <= 0f) {
+            takeStill()
+            return
+        }
+        val want = kotlin.math.round(2f / step).toInt()
+        val lo = maxOf(-want, st.exposureCompensationRange.lower)
+        val hi = minOf(want, st.exposureCompensationRange.upper)
+        // Sin margen de exposición no hay nada que juntar: foto normal
+        if (lo > -2 || hi < 2) {
+            takeStill()
+            return
+        }
+        busy = true
+        filterBar.visibility = View.GONE
+        sound.play(MediaActionSound.SHUTTER_CLICK)
+        shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        flash.alpha = 0.85f
+        flash.animate().alpha(0f).setDuration(220).start()
+        showToast("Quieto… 3 fotos")
+        val order = listOf(lo, 0, hi)
+        val shots = ArrayList<ByteArray>()
+        val currentFilter = filter
+        fun next(i: Int) {
+            if (i == order.size) {
+                applyExposure()
+                busy = false
+                showToast("Juntando las 3 fotos…")
+                saveExecutor.execute { saveSunset(shots, currentFilter) }
+                return
+            }
+            val future = try {
+                cam.cameraControl.setExposureCompensationIndex(order[i])
+            } catch (e: Exception) {
+                null
+            }
+            val take = Runnable {
+                // Un respiro para que la cámara se acomode a la nueva exposición
+                main.postDelayed({
+                    grab { b ->
+                        runOnUiThread {
+                            if (b != null) shots += b
+                            next(i + 1)
+                        }
+                    }
+                }, 280)
+            }
+            if (future == null) main.post(take)
+            else future.addListener(take, ContextCompat.getMainExecutor(this))
+        }
+        next(0)
+    }
+
+    private fun saveSunset(shots: List<ByteArray>, f: PhotoFilter) {
+        if (shots.isEmpty()) {
+            finishSave("No se pudo tomar la foto")
+            return
+        }
+        val msg = try {
+            if (shots.size < 3) {
+                // Alguna falló: queda la última, con la mejora de atardecer
+                MotionPhotoWriter.save(
+                    this,
+                    MotionPhotoWriter.applyFilter(Enhance.jpeg(this, shots.last(), sunset = true), f),
+                    null, "_ATARDECER",
+                )
+                null
+            } else {
+                // Tamaño contenido: juntar tres fotos de 12 MP no cabe en memoria
+                val bmps = shots.map { Processing.decode(it, 3000) }
+                val w = bmps[0].width
+                val h = bmps[0].height
+                val frames = bmps.map { b -> IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) } }
+                bmps.forEach { it.recycle() }
+                val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+                val (fused, rep) = Bracket.fuse(frames, w, h, threads)
+                Log.d(TAG, "Atardecer $rep")
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                bmp.setPixels(fused, 0, w, 0, 0, w, h)
+                Enhance.bitmap(this, bmp, sunset = true)
+                MotionPhotoWriter.save(
+                    this,
+                    MotionPhotoWriter.applyFilter(Processing.encode(bmp, 95), f),
+                    null, "_ATARDECER",
+                )
+                bmp.recycle()
+                null
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Atardecer", e)
+            "Error juntando las fotos: ${e.message}"
+        }
+        finishSave(msg)
     }
 
     /** 6 fotos seguidas de la luna, luego se alinean y se juntan. */
