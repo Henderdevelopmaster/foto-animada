@@ -69,7 +69,8 @@ object Astro {
             if (bmp !== base) bmp.recycle()
         }
         if (used == 0) return base
-        for (j in 0 until n) { ar[j] /= used; ag[j] /= used; ab[j] /= used }
+        val inv = 1f / used
+        for (j in 0 until n) { ar[j] = ar[j] * inv; ag[j] = ag[j] * inv; ab[j] = ab[j] * inv }
         // Nitidez: máscara de enfoque sobre el promedio (ya sin ruido)
         val lum = FloatArray(n) { 0.299f * ar[it] + 0.587f * ag[it] + 0.114f * ab[it] }
         val blur = box(box(lum, side, 2), side, 2)
