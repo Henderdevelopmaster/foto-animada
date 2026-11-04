@@ -144,6 +144,14 @@ object MotionPhotoWriter {
         return uri
     }
 
+    /** Reemplaza el contenido de una foto ya guardada (para la versión mejorada). */
+    fun replace(context: Context, uri: Uri, jpeg: ByteArray, mp4: ByteArray?) {
+        context.contentResolver.openOutputStream(uri, "wt")!!.use { out ->
+            out.write(jpeg)
+            if (mp4 != null) out.write(mp4)
+        }
+    }
+
     private val offsetRegex = Regex("""GCamera:MicroVideoOffset="(\d+)"""")
     private val lengthRegex = Regex("""Item:Semantic="MotionPhoto"[^>]*?Item:Length="(\d+)"""")
 

@@ -1795,13 +1795,14 @@ class MainActivity : ComponentActivity() {
             // Dar tiempo a que la cámara se acomode a la luz de la pantalla
             main.postDelayed({
                 busy = false
-                doTakeStill()
-                main.postDelayed({ hideScreenFlash() }, 650)
-            }, 420)
+                doTakeStill(screenLit = true)
+                // Por si la cámara nunca avisa, no dejar la pantalla prendida
+                main.postDelayed({ if (screenFlash.visibility == View.VISIBLE) hideScreenFlash() }, 4000)
+            }, 700)
         } else doTakeStill()
     }
 
-    private fun doTakeStill() {
+    private fun doTakeStill(screenLit: Boolean = false) {
         val ic = imageCapture ?: return
         if (busy) return
         busy = true
@@ -1875,9 +1876,11 @@ class MainActivity : ComponentActivity() {
                 override fun onCaptureStarted() {
                     // Instante real de la foto: el Live queda centrado aquí
                     if (live) recorder.markShutter(System.nanoTime() / 1000)
+                    if (screenLit) main.postDelayed({ hideScreenFlash() }, 350)
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    if (screenLit) main.post { if (screenFlash.visibility == View.VISIBLE) hideScreenFlash() }
                     val bytes = photoFile.readBytes()
                     photoFile.delete()
                     synchronized(lock) { photo = bytes }
@@ -1886,6 +1889,7 @@ class MainActivity : ComponentActivity() {
 
                 override fun onError(exception: ImageCaptureException) {
                     Log.e(TAG, "Error tomando la foto", exception)
+                    if (screenLit) main.post { hideScreenFlash() }
                     photoFile.delete()
                     finishOne()
                 }
@@ -1914,26 +1918,28 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun saveResult(photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter) {
-        var message: String? = null
+        if (photo == null) {
+            finishSave("No se pudo tomar la foto")
+            return
+        }
         try {
-            when {
-                photo == null -> message = "No se pudo tomar la foto"
-                clip == null -> {
-                    MotionPhotoWriter.save(this, MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo), f), null)
-                    if (live) message = "Se guardó sin movimiento"
-                }
-                else -> {
-                    val mp4 = MotionPhotoWriter.muxToMp4(clip, cacheDir)
-                    val xmp = MotionPhotoWriter.buildXmp(mp4.bytes.size, mp4.presentationUs, f)
-                    val jpeg = MotionPhotoWriter.insertXmp(MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo), f), xmp)
-                    MotionPhotoWriter.save(this, jpeg, mp4.bytes)
-                }
+            // 1) La foto tal cual sale de la cámara: aparece en la galería en seguida
+            val mp4 = clip?.let { MotionPhotoWriter.muxToMp4(it, cacheDir) }
+            val xmp = mp4?.let { MotionPhotoWriter.buildXmp(it.bytes.size, it.presentationUs, f) }
+            val quick = if (xmp != null) MotionPhotoWriter.insertXmp(photo, xmp) else photo
+            val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
+            finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
+            // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
+            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL) {
+                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo), f)
+                val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
+                MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
+                refreshThumbnail()
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error guardando", e)
-            message = "Error: ${e.message}"
+            finishSave("Error: ${e.message}")
         }
-        finishSave(message)
     }
 
     private fun saveInstant(photo: ByteArray?) {
@@ -2478,9 +2484,47 @@ class MainActivity : ComponentActivity() {
         showToast("Texto del QR copiado")
     }
 
+    /** Recorta marcos lisos (Polaroid, negativo…) y deja un cuadrado centrado para la bolita. */
+    private fun roundThumb(orig: Bitmap?): Bitmap? = try {
+        trimThumb(orig)
+    } catch (e: Exception) {
+        orig
+    }
+
+    private fun trimThumb(orig: Bitmap?): Bitmap? {
+        orig ?: return null
+        val src = if (orig.config == Bitmap.Config.HARDWARE) orig.copy(Bitmap.Config.ARGB_8888, false) else orig
+        val w = src.width
+        val h = src.height
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        fun plainRow(y: Int): Boolean {
+            val c0 = px[y * w]
+            for (x in 0 until w step 3) if (diff(px[y * w + x], c0) > 40) return false
+            return true
+        }
+        fun plainCol(x: Int): Boolean {
+            val c0 = px[x]
+            for (y in 0 until h step 3) if (diff(px[y * w + x], c0) > 40) return false
+            return true
+        }
+        var top = 0; var bottom = h - 1; var left = 0; var right = w - 1
+        while (top < h / 3 && plainRow(top)) top++
+        while (bottom > h * 2 / 3 && plainRow(bottom)) bottom--
+        while (left < w / 3 && plainCol(left)) left++
+        while (right > w * 2 / 3 && plainCol(right)) right--
+        val cw = right - left + 1
+        val ch = bottom - top + 1
+        val side = minOf(cw, ch)
+        return Bitmap.createBitmap(src, left + (cw - side) / 2, top + (ch - side) / 2, side, side)
+    }
+
+    private fun diff(a: Int, b: Int): Int =
+        abs(((a shr 16) and 255) - ((b shr 16) and 255)) + abs(((a shr 8) and 255) - ((b shr 8) and 255)) + abs((a and 255) - (b and 255))
+
     private fun finishSave(message: String?) {
-        val thumb = MediaRepo.list(this, onlyOwn = true).firstOrNull()
-            ?.let { MediaRepo.thumbnail(this, it.uri, 200) }
+        val thumb = roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
+            ?.let { MediaRepo.thumbnail(this, it.uri, 200) })
         runOnUiThread {
             busy = false
             livePill.visibility = View.GONE
@@ -2516,8 +2560,8 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshThumbnail() {
         ioExecutor.execute {
-            val thumb = MediaRepo.list(this, onlyOwn = true).firstOrNull()
-                ?.let { MediaRepo.thumbnail(this, it.uri, 200) }
+            val thumb = roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
+                ?.let { MediaRepo.thumbnail(this, it.uri, 200) })
             runOnUiThread {
                 if (thumb != null) thumbnail.setImageBitmap(thumb) else thumbnail.setImageDrawable(null)
             }
