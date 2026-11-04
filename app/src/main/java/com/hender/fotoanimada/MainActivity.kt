@@ -877,7 +877,7 @@ class MainActivity : ComponentActivity() {
         })
 
         data class Seg(val id: String, val label: String, val note: String)
-        fun section(title: String, key: String, segs: List<Seg>) {
+        fun section(title: String, key: String, segs: List<Seg>, def: String = segs[segs.size / 2].id) {
             root.addView(TextView(this).apply {
                 text = title.uppercase()
                 textSize = 11.5f
@@ -921,7 +921,7 @@ class MainActivity : ComponentActivity() {
             }
             root.addView(bar, LinearLayout.LayoutParams(-1, -2))
             root.addView(note)
-            paint(CameraSettings.get(this, key, segs[segs.size / 2].id).let { cur ->
+            paint(CameraSettings.get(this, key, def).let { cur ->
                 if (segs.any { it.id == cur }) cur else segs.first().id
             })
         }
@@ -935,7 +935,7 @@ class MainActivity : ComponentActivity() {
         section("Mejora automática", CameraSettings.ENHANCE, listOf(
             Seg("on", "Activada", "Luces y sombras parejas, caras más claras, menos ruido y menos halo en las luces"),
             Seg("off", "Apagada", "La foto tal cual sale del sensor"),
-        ))
+        ), def = "on")
         section("Video", CameraSettings.VIDEO, listOf(
             Seg("hd", "720p", "Más liviano"),
             Seg("fhd", "1080p", "Recomendado"),
@@ -949,7 +949,7 @@ class MainActivity : ComponentActivity() {
         section("Video con efectos", CameraSettings.EFFECTS, listOf(
             Seg("720", "Fluido", "960 × 720 · recomendado"),
             Seg("960", "Alta", "1280 × 960 · puede ir más lento"),
-        ))
+        ), def = "720")
 
         root.addView(TextView(this).apply {
             text = "Listo"
