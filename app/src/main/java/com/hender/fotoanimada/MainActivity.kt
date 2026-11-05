@@ -20,6 +20,7 @@ import android.util.Log
 import android.util.Rational
 import android.util.Size
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.Surface
@@ -134,6 +135,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var ringLight: FlashView
     private var flashShape = "full"
     private var flashMode = "off" // off, auto, on, torch
+
+    // Enfoque y brillo al tocar (tipo iPhone)
+    private lateinit var focusBox: FocusBoxView
+    private lateinit var lockBadge: TextView
+    private var evBias = 0          // pasos de compensación elegidos por el usuario
+    private var aeLocked = false
     private var flashColor = 0xFFFFFFFF.toInt()
 
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -264,6 +271,7 @@ class MainActivity : ComponentActivity() {
         flashColor = prefs.getInt(KEY_FLASH_COLOR, 0xFFFFFFFF.toInt())
         flashButton.setOnClickListener { showFlashMenu() }
         buildMoonPanel()
+        buildFocusBox()
 
         // TextureView: permite pintar la vista previa con el filtro en vivo
         previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -278,6 +286,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // La cámara no se apaga sola mientras la usas (time-lapse, luna, etc.)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         sound.load(MediaActionSound.SHUTTER_CLICK)
         sound.load(MediaActionSound.START_VIDEO_RECORDING)
         sound.load(MediaActionSound.STOP_VIDEO_RECORDING)
@@ -339,6 +349,7 @@ class MainActivity : ComponentActivity() {
                 CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
             it.animate().rotationBy(180f).setDuration(300).start()
             engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
+            clearFocusLock()
             // Giro 3D de la vista, como el iPhone al cambiar de cámara
             freezePreview()
             previewBox.animate().rotationY(90f).setDuration(150).withEndAction {
@@ -364,8 +375,56 @@ class MainActivity : ComponentActivity() {
         main.postDelayed(qrScan, 1200)
     }
 
+    // ---------- Botones de volumen = obturador (mantener = video, como el iPhone) ----------
+
+    private var volLong = false
+    private var volHeld = false
+    private val volLongPress = Runnable {
+        if ((mode == Mode.PHOTO || mode == Mode.INSTANT) && !busy && timerSecs == 0) {
+            volLong = true
+            startQuickTake()
+        }
+    }
+
+    private fun playSound(id: Int) {
+        if (CameraSettings.get(this, CameraSettings.SOUND, "on") == "on") sound.play(id)
+    }
+
+    private fun isVolume(code: Int) = code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (isVolume(keyCode) && developOverlay.visibility != View.VISIBLE) {
+            if (event.repeatCount == 0 && !volHeld) {
+                volHeld = true
+                volLong = false
+                shutter.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start()
+                main.postDelayed(volLongPress, 450)
+            }
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (isVolume(keyCode) && volHeld) {
+            volHeld = false
+            main.removeCallbacks(volLongPress)
+            shutter.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            when {
+                volLong -> if (quickTaking) stopQuickTake()
+                else -> onShutterTap()
+            }
+            volLong = false
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
     override fun onPause() {
         super.onPause()
+        main.removeCallbacks(volLongPress)
+        volHeld = false
+        clearFocusLock()
         main.removeCallbacks(qrScan)
         if (timelapsing) stopTimelapse()
         if (quickTaking) stopQuickTake()
@@ -395,6 +454,7 @@ class MainActivity : ComponentActivity() {
         val rebind = groupOf(old) != groupOf(m) || aspectOf(old) != aspectOf(m) ||
             (m == Mode.EFFECTS && lensFacing != CameraSelector.LENS_FACING_FRONT)
         if (rebind) freezePreview()
+        clearFocusLock()
         mode = m
         if (m == Mode.EFFECTS) lensFacing = CameraSelector.LENS_FACING_FRONT
         prefs.edit().putString(KEY_MODE, m.name).apply()
@@ -697,7 +757,7 @@ class MainActivity : ComponentActivity() {
         audio.keepUs = (MAX_QUICKTAKE_S + 5) * 1_000_000L
         updateAudio()
         engine.startRecording()
-        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        playSound(MediaActionSound.START_VIDEO_RECORDING)
         shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         shutter.setBackgroundResource(R.drawable.shutter_rec)
         recTimer.visibility = View.VISIBLE
@@ -709,7 +769,7 @@ class MainActivity : ComponentActivity() {
         if (!effectRecording) return
         effectRecording = false
         main.removeCallbacks(effectTick)
-        sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         recTimer.visibility = View.GONE
         shutter.setBackgroundResource(R.drawable.shutter)
         showToast("Guardando video…")
@@ -958,6 +1018,10 @@ class MainActivity : ComponentActivity() {
             Seg("12", "12 MP", "Recomendada"),
             Seg("max", "MÁX", "Hasta 200 MP · tarda más y cada foto pesa mucho"),
         ))
+        section("Sonido de la cámara", CameraSettings.SOUND, listOf(
+            Seg("on", "Con sonido", "Clic al tomar la foto y pitido al grabar"),
+            Seg("off", "En silencio", "Sin ningún sonido"),
+        ), def = "on")
         section("Mejora automática", CameraSettings.ENHANCE, listOf(
             Seg("on", "Activada", "Luces y sombras parejas, caras más claras, menos ruido y menos halo en las luces"),
             Seg("off", "Apagada", "La foto tal cual sale del sensor"),
@@ -1200,20 +1264,53 @@ class MainActivity : ComponentActivity() {
         var downX = 0f
         var downY = 0f
         var multi = false
+        var longDone = false
+        var adjusting = false
+        var startBias = 0
+        var lastX = 0f
+        var lastY = 0f
+        val longPress = Runnable {
+            if (!multi && !scale.isInProgress) {
+                longDone = true
+                lockAt(lastX, lastY)
+            }
+        }
         previewView.setOnTouchListener { _, ev ->
             scale.onTouchEvent(ev)
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = ev.x; downY = ev.y; multi = false
+                    downX = ev.x; downY = ev.y; lastX = ev.x; lastY = ev.y
+                    multi = false; longDone = false; adjusting = false
+                    startBias = evBias
+                    main.postDelayed(longPress, 650)
                 }
-                MotionEvent.ACTION_POINTER_DOWN -> multi = true
-                MotionEvent.ACTION_UP -> {
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    multi = true
+                    main.removeCallbacks(longPress)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lastX = ev.x; lastY = ev.y
+                    val dx = ev.x - downX
+                    val dy = ev.y - downY
+                    if (abs(dx) > dp(10) || abs(dy) > dp(10)) main.removeCallbacks(longPress)
+                    // Con el cuadro a la vista, arrastrar hacia arriba/abajo cambia el brillo
+                    if (!multi && !longDone && focusBox.visibility == View.VISIBLE &&
+                        (adjusting || (abs(dy) > dp(8) && abs(dy) > abs(dx) * 1.3f))
+                    ) {
+                        adjusting = true
+                        dragExposure(startBias, dy)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPress)
                     val dx = ev.x - downX
                     val dy = ev.y - downY
                     when {
-                        multi || scale.isInProgress -> {}
+                        ev.actionMasked == MotionEvent.ACTION_CANCEL -> {}
+                        adjusting -> endExposureDrag()
+                        longDone || multi || scale.isInProgress -> {}
                         abs(dx) > dp(70) && abs(dx) > abs(dy) * 1.5f -> swipeMode(if (dx < 0) 1 else -1)
-                        ev.eventTime - ev.downTime < 250 && abs(dx) < dp(10) -> focusAt(ev.x, ev.y)
+                        ev.eventTime - ev.downTime < 400 && abs(dx) < dp(10) && abs(dy) < dp(10) -> focusAt(ev.x, ev.y)
                     }
                 }
             }
@@ -1249,19 +1346,170 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ---------- Enfoque y brillo al tocar ----------
+
+    private fun buildFocusBox() {
+        focusBox = FocusBoxView(this).apply { visibility = View.GONE; alpha = 0f }
+        previewBox.addView(focusBox, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        lockBadge = TextView(this).apply {
+            text = "BLOQUEO AE/AF"
+            textSize = 12f
+            letterSpacing = 0.06f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(0xFF000000.toInt())
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(6).toFloat()
+                setColor(0xFFFFD60A.toInt())
+            }
+            visibility = View.GONE
+        }
+        previewBox.addView(lockBadge, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            topMargin = dp(14)
+        })
+    }
+
+    private val dimFocus = Runnable {
+        focusBox.dragging = false
+        focusBox.animate().alpha(if (aeLocked) 0.85f else 0.5f).setDuration(300).start()
+    }
+
+    private val hideFocus = Runnable {
+        if (aeLocked) return@Runnable
+        focusBox.animate().alpha(0f).setDuration(300).withEndAction { focusBox.visibility = View.GONE }.start()
+    }
+
+    /** Pone el cuadro donde se tocó, con el "rebote" de entrada del iPhone. */
+    private fun showFocusBox(x: Float, y: Float) {
+        focusBox.measure(0, 0)
+        val w = focusBox.measuredWidth
+        val h = focusBox.measuredHeight
+        // Si el toque está muy a la derecha, el sol iría fuera: se corre el cuadro un poco
+        val bx = x - focusBox.boxCenterX
+        focusBox.x = bx.coerceIn(-focusBox.boxCenterX / 2f, previewBox.width - w.toFloat())
+        focusBox.y = y - h / 2f
+        focusBox.level = evLevel()
+        focusBox.dragging = false
+        focusBox.animate().cancel()
+        focusBox.visibility = View.VISIBLE
+        focusBox.alpha = 1f
+        focusBox.scaleX = 1.3f
+        focusBox.scaleY = 1.3f
+        focusBox.pivotX = focusBox.boxCenterX
+        focusBox.pivotY = h / 2f
+        focusBox.animate().scaleX(1f).scaleY(1f).setDuration(220)
+            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        main.removeCallbacks(dimFocus)
+        main.removeCallbacks(hideFocus)
+        main.postDelayed(dimFocus, 1800)
+        main.postDelayed(hideFocus, 5000)
+    }
+
+    /** Toque: enfoca y mide la luz en ese punto (y el brillo vuelve a lo normal). */
     private fun focusAt(x: Float, y: Float) {
         val cam = camera ?: return
+        if (mode == Mode.MOON) {
+            showToast("En Luna el enfoque va fijo al infinito · usa la barra de brillo")
+            return
+        }
+        val wasLocked = aeLocked
+        aeLocked = false
+        lockBadge.visibility = View.GONE
+        evBias = 0
+        applyExposure()
         val point = previewView.meteringPointFactory.createPoint(x, y)
-        cam.cameraControl.startFocusAndMetering(FocusMeteringAction.Builder(point).build())
-        focusRing.x = x - focusRing.width / 2
-        focusRing.y = y - focusRing.height / 2
-        focusRing.animate().cancel()
-        focusRing.alpha = 1f
-        focusRing.scaleX = 1.4f
-        focusRing.scaleY = 1.4f
-        focusRing.animate().scaleX(1f).scaleY(1f).setDuration(200).withEndAction {
-            focusRing.animate().alpha(0f).setStartDelay(900).setDuration(300).start()
+        try {
+            cam.cameraControl.startFocusAndMetering(
+                FocusMeteringAction.Builder(
+                    point,
+                    FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB,
+                ).setAutoCancelDuration(6, java.util.concurrent.TimeUnit.SECONDS).build()
+            )
+        } catch (_: Exception) {
+        }
+        if (wasLocked) showToast("Bloqueo quitado")
+        showFocusBox(x, y)
+    }
+
+    /** Mantener presionado: bloquea enfoque y brillo hasta que vuelvas a tocar. */
+    private fun lockAt(x: Float, y: Float) {
+        val cam = camera ?: return
+        if (mode == Mode.MOON) return
+        evBias = 0
+        applyExposure()
+        val point = previewView.meteringPointFactory.createPoint(x, y)
+        try {
+            cam.cameraControl.startFocusAndMetering(
+                FocusMeteringAction.Builder(
+                    point,
+                    FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB,
+                ).disableAutoCancel().build()
+            )
+        } catch (_: Exception) {
+        }
+        aeLocked = true
+        shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        showFocusBox(x, y)
+        // Pulso doble del cuadro y el aviso amarillo arriba
+        focusBox.animate().scaleX(0.9f).scaleY(0.9f).setDuration(120).withEndAction {
+            focusBox.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
         }.start()
+        lockBadge.alpha = 0f
+        lockBadge.visibility = View.VISIBLE
+        lockBadge.animate().alpha(1f).setDuration(200).start()
+        main.removeCallbacks(hideFocus)
+    }
+
+    private fun clearFocusLock() {
+        aeLocked = false
+        evBias = 0
+        main.removeCallbacks(dimFocus)
+        main.removeCallbacks(hideFocus)
+        if (::focusBox.isInitialized) {
+            focusBox.animate().cancel()
+            focusBox.visibility = View.GONE
+            lockBadge.visibility = View.GONE
+        }
+    }
+
+    /** Pasos de compensación disponibles (máximo ±2 EV, como el iPhone). */
+    private fun evSteps(): Int {
+        val st = camera?.cameraInfo?.exposureState ?: return 0
+        if (!st.isExposureCompensationSupported) return 0
+        val step = st.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: return 0
+        return kotlin.math.round(2f / step).toInt().coerceAtLeast(1)
+    }
+
+    private fun evLevel(): Float {
+        val n = evSteps()
+        return if (n == 0) 0f else (evBias.toFloat() / n).coerceIn(-1f, 1f)
+    }
+
+    /** Arrastrar: hacia arriba más claro, hacia abajo más oscuro. */
+    private fun dragExposure(startBias: Int, dy: Float) {
+        val n = evSteps()
+        if (n == 0) return
+        val pxPerStep = dp(120).toFloat() / n
+        val target = (startBias - (dy / pxPerStep).toInt()).coerceIn(-n, n)
+        main.removeCallbacks(dimFocus)
+        main.removeCallbacks(hideFocus)
+        focusBox.animate().cancel()
+        focusBox.alpha = 1f
+        focusBox.dragging = true
+        if (target != evBias) {
+            evBias = target
+            focusBox.level = evLevel()
+            applyExposure()
+            if (evBias == 0) shutter.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+
+    private fun endExposureDrag() {
+        main.postDelayed(dimFocus, 1500)
+        if (!aeLocked) main.postDelayed(hideFocus, 6000)
     }
 
     // ---------- Obturador: toque, mantener (QuickTake) y deslizar (ráfaga) ----------
@@ -1389,7 +1637,7 @@ class MainActivity : ComponentActivity() {
         recorder.enabled = true
         updateAudio()
         recorder.startLong()
-        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        playSound(MediaActionSound.START_VIDEO_RECORDING)
         shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         shutter.setBackgroundResource(R.drawable.shutter_rec)
         recTimer.visibility = View.VISIBLE
@@ -1401,7 +1649,7 @@ class MainActivity : ComponentActivity() {
         if (!quickTaking) return
         quickTaking = false
         main.removeCallbacks(quickTick)
-        sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         recTimer.visibility = View.GONE
         shutter.setBackgroundResource(R.drawable.shutter)
         showToast("Guardando video…")
@@ -1449,7 +1697,7 @@ class MainActivity : ComponentActivity() {
         if (!bursting) return
         val f = filter
         val file = File(cacheDir, "burst.jpg")
-        sound.play(MediaActionSound.SHUTTER_CLICK)
+        playSound(MediaActionSound.SHUTTER_CLICK)
         ic.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).build(),
             ioExecutor,
@@ -1503,7 +1751,7 @@ class MainActivity : ComponentActivity() {
             .build()
         var pending = vc.output.prepareRecording(this, options)
         if (has(Manifest.permission.RECORD_AUDIO)) pending = pending.withAudioEnabled()
-        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        playSound(MediaActionSound.START_VIDEO_RECORDING)
         recording = pending.start(ContextCompat.getMainExecutor(this)) { event ->
             when (event) {
                 is VideoRecordEvent.Start -> {
@@ -1517,7 +1765,7 @@ class MainActivity : ComponentActivity() {
                 }
                 is VideoRecordEvent.Finalize -> {
                     recording = null
-                    sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+                    playSound(MediaActionSound.STOP_VIDEO_RECORDING)
                     shutter.setBackgroundResource(R.drawable.shutter_rec)
                     recTimer.visibility = View.GONE
                     if (event.hasError()) showToast("Error grabando: ${event.error}")
@@ -1661,11 +1909,13 @@ class MainActivity : ComponentActivity() {
         val st = cam.cameraInfo.exposureState
         if (!st.isExposureCompensationSupported) return
         val step = st.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: return
-        val idx = when {
+        val base = when {
             mode == Mode.SUNSET -> (-1f / step).roundToIntSafe()
             mode == Mode.MOON && !manualSensor() -> st.exposureCompensationRange.lower
             else -> 0
-        }.coerceIn(st.exposureCompensationRange.lower, st.exposureCompensationRange.upper)
+        }
+        val idx = (base + if (mode == Mode.MOON) 0 else evBias)
+            .coerceIn(st.exposureCompensationRange.lower, st.exposureCompensationRange.upper)
         try {
             cam.cameraControl.setExposureCompensationIndex(idx)
         } catch (_: Exception) {
@@ -1732,7 +1982,7 @@ class MainActivity : ComponentActivity() {
         }
         busy = true
         filterBar.visibility = View.GONE
-        sound.play(MediaActionSound.SHUTTER_CLICK)
+        playSound(MediaActionSound.SHUTTER_CLICK)
         shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         flash.alpha = 0.85f
         flash.animate().alpha(0f).setDuration(220).start()
@@ -1825,7 +2075,7 @@ class MainActivity : ComponentActivity() {
                 saveExecutor.execute { saveMoon(shots) }
                 return
             }
-            sound.play(MediaActionSound.SHUTTER_CLICK)
+            playSound(MediaActionSound.SHUTTER_CLICK)
             grab { b ->
                 runOnUiThread {
                     if (b != null) shots += b
@@ -2044,7 +2294,7 @@ class MainActivity : ComponentActivity() {
 
         val live = liveActive
         // Como en el iPhone: con LIVE no suena el clic (si sonara, quedaría grabado en el audio)
-        if (!live) sound.play(MediaActionSound.SHUTTER_CLICK)
+        if (!live) playSound(MediaActionSound.SHUTTER_CLICK)
         shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         flash.alpha = 0.85f
         flash.animate().alpha(0f).setDuration(220).start()
@@ -2565,7 +2815,7 @@ class MainActivity : ComponentActivity() {
                         main.postDelayed(this, 650)
                     } else {
                         countdown.text = "${i + 1}/4"
-                        sound.play(MediaActionSound.SHUTTER_CLICK)
+                        playSound(MediaActionSound.SHUTTER_CLICK)
                         flash.alpha = 0.85f
                         flash.animate().alpha(0f).setDuration(220).start()
                         grab { b ->
@@ -2638,7 +2888,7 @@ class MainActivity : ComponentActivity() {
         recorder.timelapseStep = 15
         recorder.enabled = true
         recorder.startLong()
-        sound.play(MediaActionSound.START_VIDEO_RECORDING)
+        playSound(MediaActionSound.START_VIDEO_RECORDING)
         shutter.setBackgroundResource(R.drawable.shutter_stop)
         recTimer.visibility = View.VISIBLE
         recTimer.text = "0:00"
@@ -2649,7 +2899,7 @@ class MainActivity : ComponentActivity() {
         if (!timelapsing) return
         timelapsing = false
         main.removeCallbacks(timelapseTick)
-        sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         shutter.setBackgroundResource(R.drawable.shutter_rec)
         recTimer.visibility = View.GONE
         showToast("Guardando time-lapse…")

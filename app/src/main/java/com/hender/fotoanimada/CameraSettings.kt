@@ -43,6 +43,7 @@ object CameraSettings {
     const val LIVE = "live_res"
     const val EFFECTS = "effects_res"
     const val ENHANCE = "enhance"
+    const val SOUND = "sound"
     const val FORMAT = "format"
 
     /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
