@@ -76,6 +76,25 @@ object EnhanceCore {
         val n = sw * sh
         val k = o.strength.coerceIn(0f, 1.5f)
 
+        // Caras: el anti-halo no las toca (el brillo de la piel no es un bombillo; antes la
+        // dejaba gris, como una mancha de ceniza en el cachete)
+        val faceGuard = FloatArray(n)
+        for (fc in o.faces) {
+            val rx = max(1f, fc.w * sw * 0.75f)
+            val ry = max(1f, fc.h * sh * 0.85f)
+            val cx = fc.cx * sw
+            val cy = fc.cy * sh
+            for (y in 0 until sh) for (x in 0 until sw) {
+                val dx = (x + 0.5f - cx) / rx
+                val dy = (y + 0.5f - cy) / ry
+                val d2 = dx * dx + dy * dy
+                if (d2 < 2.25f) {
+                    val i = y * sw + x
+                    faceGuard[i] = max(faceGuard[i], smooth(2.25f, 1f, d2))
+                }
+            }
+        }
+
         // ---- 1) Halo alrededor de luces --------------------------------------
         var luma = FloatArray(n) { 0.299f * s.r[it] + 0.587f * s.g[it] + 0.114f * s.b[it] }
         val median0 = percentile(luma, 0.5f)
@@ -86,7 +105,7 @@ object EnhanceCore {
         if (glareStrength > 0.03f) {
             // Solo luces "puntuales" (focos, faroles); el cielo o una ventana grande no cuentan
             val density = boxBlur(src, sw, sh, max(2, max(sw, sh) / 26))
-            val point = FloatArray(n) { src[it] * (1f - smooth(0.16f, 0.45f, density[it])) }
+            val point = FloatArray(n) { src[it] * (1f - smooth(0.16f, 0.45f, density[it])) * (1f - faceGuard[it]) }
             if (point.sum() > 0.6f) {
                 val big = max(sw, sh).toFloat()
                 // Solo el velo ancho; el brillito pegado a la luz se ve natural y se deja
@@ -114,7 +133,7 @@ object EnhanceCore {
                         FloatArray(n) {
                             val bg = (num[it] + 1e-3f * fallback) / (den[it] + 1e-3f)
                             val excess = max(0f, low[it] - bg)
-                            min(excess, model[it] * 1.3f) * glareStrength * 0.7f
+                            min(excess, model[it] * 1.3f) * glareStrength * 0.7f * (1f - faceGuard[it])
                         }
                     }
                     for (i in 0 until n) {
@@ -382,6 +401,14 @@ object EnhanceCore {
         if (sr > 0.75f * r) t = min(t, 0.75f * r / sr)
         if (sg > 0.75f * g) t = min(t, 0.75f * g / sg)
         if (sb > 0.75f * b) t = min(t, 0.75f * b / sb)
+        // El halo es un velo sobre lo oscuro (cielo, pared de noche). Lo que ya está claro
+        // (piel iluminada, una pared con luz) no se toca: si no, queda gris y sin color.
+        val l = 0.299f * r + 0.587f * g + 0.114f * b
+        val sl = (0.299f * sr + 0.587f * sg + 0.114f * sb) * t
+        if (sl > 1e-5f) {
+            val allowed = 0.55f * l * (1f - smooth(0.15f, 0.45f, l))
+            if (sl > allowed) t *= allowed / sl
+        }
         return t
     }
 
