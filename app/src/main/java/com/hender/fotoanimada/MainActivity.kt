@@ -1221,7 +1221,22 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT -> instantLook.colorFilter()
             else -> filter.colorFilter()
         }
-        findTexture(previewView)?.setLayerPaint(cf?.let { Paint().apply { colorFilter = it } })
+        // Con poca luz la vista se aclara (la foto luego sale igual de clara con la mejora de noche)
+        val boost = lowLight && fx == null && mode != Mode.NIGHT_VISION && mode != Mode.MOON &&
+            mode != Mode.VIDEO && mode != Mode.TIMELAPSE
+        val finalCf = if (boost) {
+            val m = android.graphics.ColorMatrix()
+            (cf as? android.graphics.ColorMatrixColorFilter)?.getColorMatrix(m)
+            val gain = android.graphics.ColorMatrix(floatArrayOf(
+                2.1f, 0f, 0f, 0f, 6f,
+                0f, 2.1f, 0f, 0f, 6f,
+                0f, 0f, 2.1f, 0f, 6f,
+                0f, 0f, 0f, 1f, 0f,
+            ))
+            if (cf is android.graphics.ColorMatrixColorFilter) m.postConcat(gain) else m.set(gain)
+            android.graphics.ColorMatrixColorFilter(m)
+        } else cf
+        findTexture(previewView)?.setLayerPaint(finalCf?.let { Paint().apply { colorFilter = it } })
         shapeMask.shape = instantShape
         for (i in 0 until filterList.childCount) {
             val item = filterList.getChildAt(i) as LinearLayout
@@ -1843,7 +1858,7 @@ class MainActivity : ComponentActivity() {
                 if (now - darkSince > 1200) {
                     lowLight = true
                     darkSince = 0
-                    main.post { applySmoothFps() }
+                    main.post { applySmoothFps(); applyPreviewFilter() }
                 }
             } else darkSince = 0
         } else {
@@ -1852,7 +1867,7 @@ class MainActivity : ComponentActivity() {
                 if (now - brightSince > 1500) {
                     lowLight = false
                     brightSince = 0
-                    main.post { applySmoothFps() }
+                    main.post { applySmoothFps(); applyPreviewFilter() }
                 }
             } else brightSince = 0
         }
@@ -2325,6 +2340,7 @@ class MainActivity : ComponentActivity() {
         val front = lensFacing == CameraSelector.LENS_FACING_FRONT
         if (mode == Mode.PORTRAIT || mode == Mode.NIGHT || mode == Mode.NIGHT_VISION) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
+        val dark = lowLight
         if (live) {
             livePill.visibility = View.VISIBLE
             livePill.alpha = 1f
@@ -2364,7 +2380,7 @@ class MainActivity : ComponentActivity() {
                         if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, night = true), currentFilter)
                         else Processing.night(it, currentFilter)
                     }
-                    else -> saveResult(p, c, live, currentFilter)
+                    else -> saveResult(p, c, live, currentFilter, dark)
                 }
             }
         }
@@ -2426,7 +2442,7 @@ class MainActivity : ComponentActivity() {
             })
     }
 
-    private fun saveResult(photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter) {
+    private fun saveResult(photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
             return
@@ -2439,8 +2455,8 @@ class MainActivity : ComponentActivity() {
             val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
             finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
             // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
-            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL) {
-                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo), f)
+            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark) {
+                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo, night = dark), f)
                 val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
                 MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
                 refreshThumbnail()

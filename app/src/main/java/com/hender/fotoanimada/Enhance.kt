@@ -31,7 +31,7 @@ object Enhance {
 
     /** Devuelve la foto mejorada. Si algo falla, devuelve la original tal cual. */
     fun jpeg(context: Context, jpeg: ByteArray, night: Boolean = false, sunset: Boolean = false): ByteArray {
-        if (!enabled(context) && !sunset) return jpeg
+        if (!enabled(context) && !sunset && !night) return jpeg
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
