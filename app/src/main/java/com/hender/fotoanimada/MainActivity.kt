@@ -350,6 +350,7 @@ class MainActivity : ComponentActivity() {
             it.animate().rotationBy(180f).setDuration(300).start()
             engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
             clearFocusLock()
+            lowLight = false
             // Giro 3D de la vista, como el iPhone al cambiar de cámara
             freezePreview()
             previewBox.animate().rotationY(90f).setDuration(150).withEndAction {
@@ -1812,6 +1813,7 @@ class MainActivity : ComponentActivity() {
     // ---------- Visor fluido: 30 fps estables, y más luz solo cuando de verdad está oscuro ----------
 
     @Volatile private var lowLight = false
+    @Volatile private var darkIso = 2800
     private var darkSince = 0L
     private var brightSince = 0L
 
@@ -1834,7 +1836,9 @@ class MainActivity : ComponentActivity() {
     private fun onExposure(iso: Int, expNs: Long) {
         val now = android.os.SystemClock.uptimeMillis()
         if (!lowLight) {
-            if (iso >= 2800 && expNs >= 28_000_000L) {
+            // "Oscuro" = la cámara ya está al tope de sensibilidad (el tope cambia según la cámara:
+            // la frontal llega mucho más bajo que la de atrás)
+            if (iso >= darkIso && expNs >= 28_000_000L) {
                 if (darkSince == 0L) darkSince = now
                 if (now - darkSince > 1200) {
                     lowLight = true
@@ -1866,11 +1870,29 @@ class MainActivity : ComponentActivity() {
             val ranges = androidx.camera.camera2.interop.Camera2CameraInfo.from(cam.cameraInfo)
                 .getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
                 ?: return
+            val chars = androidx.camera.camera2.interop.Camera2CameraInfo.from(cam.cameraInfo)
+            val isoTop = chars.getCameraCharacteristic(
+                android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200
+            darkIso = minOf(2800, (isoTop * 0.7f).toInt())
             val at30 = ranges.filter { it.upper == 30 }
-            val pick = if (lowLight) at30.minByOrNull { it.lower }
+            // La frontal tiene sensor pequeño: necesita poder exponer más tiempo
+            // siempre, si no la imagen queda oscurísima adentro
+            val front = lensFacing == CameraSelector.LENS_FACING_FRONT
+            val pick = if (lowLight || front) at30.minByOrNull { it.lower }
             else at30.firstOrNull { it.lower == 30 } ?: at30.maxByOrNull { it.lower }
             val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
             pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+            if (front) {
+                // Selfies: la cámara mide la luz sobre la cara (si el cel lo soporta)
+                val scenes = chars.getCameraCharacteristic(
+                    android.hardware.camera2.CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+                if (scenes?.contains(android.hardware.camera2.CameraMetadata.CONTROL_SCENE_MODE_FACE_PRIORITY) == true) {
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_MODE,
+                        android.hardware.camera2.CameraMetadata.CONTROL_MODE_USE_SCENE_MODE)
+                    opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_SCENE_MODE,
+                        android.hardware.camera2.CameraMetadata.CONTROL_SCENE_MODE_FACE_PRIORITY)
+                }
+            }
             if (mode == Mode.MOON) {
                 // Enfoque fijo al infinito
                 opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE, android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_OFF)
