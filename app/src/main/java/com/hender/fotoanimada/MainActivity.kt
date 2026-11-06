@@ -139,7 +139,10 @@ class MainActivity : ComponentActivity() {
     // Enfoque y brillo al tocar (tipo iPhone)
     private lateinit var focusBox: FocusBoxView
     private lateinit var lockBadge: TextView
-    private var evBias = 0          // pasos de compensación elegidos por el usuario
+    private var evBias = 0          // pasos de brillo que eligió el usuario (se mantienen)
+    private lateinit var evButton: TextView
+    private lateinit var evDial: ExposureDialView
+    private var dialTouching = false
     private var aeLocked = false
     private var flashColor = 0xFFFFFFFF.toInt()
 
@@ -272,6 +275,24 @@ class MainActivity : ComponentActivity() {
         flashButton.setOnClickListener { showFlashMenu() }
         buildMoonPanel()
         buildFocusBox()
+        evButton = findViewById(R.id.evButton)
+        evDial = findViewById(R.id.evDial)
+        evButton.setOnClickListener {
+            tap(it)
+            if (evDial.visibility == View.VISIBLE) hideDial() else showDial()
+        }
+        evButton.setOnLongClickListener {
+            setUserEv(0f)
+            it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            showToast("Brillo automático")
+            true
+        }
+        evDial.onChange = { ev -> setUserEv(ev, fromDial = true) }
+        evDial.onTouchState = { touching ->
+            dialTouching = touching
+            main.removeCallbacks(hideDialLater)
+            if (!touching) main.postDelayed(hideDialLater, 3000)
+        }
 
         // TextureView: permite pintar la vista previa con el filtro en vivo
         previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -867,6 +888,7 @@ class MainActivity : ComponentActivity() {
         val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT || mode == Mode.NIGHT_VISION ||
             mode == Mode.SUNSET || mode == Mode.MOON
         updateFlashIcon()
+        updateEvUi()
         moonPanel.visibility = if (mode == Mode.MOON) View.VISIBLE else View.GONE
         formatButton.visibility = if (photoLike) View.VISIBLE else View.GONE
         formatButton.text = CameraSettings.formatLabel(format)
@@ -1425,10 +1447,10 @@ class MainActivity : ComponentActivity() {
         val wasLocked = aeLocked
         aeLocked = false
         lockBadge.visibility = View.GONE
-        evBias = 0
         autoEv = 0
         lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
+        if (wasLocked) applySmoothFps() // quita el bloqueo de exposición
         val point = previewView.meteringPointFactory.createPoint(x, y)
         try {
             cam.cameraControl.startFocusAndMetering(
@@ -1447,21 +1469,24 @@ class MainActivity : ComponentActivity() {
     private fun lockAt(x: Float, y: Float) {
         val cam = camera ?: return
         if (mode == Mode.MOON) return
-        evBias = 0
         autoEv = 0
         lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
         val point = previewView.meteringPointFactory.createPoint(x, y)
+        aeLocked = true
         try {
-            cam.cameraControl.startFocusAndMetering(
+            val future = cam.cameraControl.startFocusAndMetering(
                 FocusMeteringAction.Builder(
                     point,
                     FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB,
                 ).disableAutoCancel().build()
             )
+            // Cuando la cámara ya midió ese punto, se congela la exposición (bloqueo AE de verdad)
+            future.addListener({
+                main.postDelayed({ if (aeLocked) applySmoothFps() }, 350)
+            }, ContextCompat.getMainExecutor(this))
         } catch (_: Exception) {
         }
-        aeLocked = true
         shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         showFocusBox(x, y)
         // Pulso doble del cuadro y el aviso amarillo arriba
@@ -1475,8 +1500,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun clearFocusLock() {
+        val wasLocked = aeLocked
         aeLocked = false
-        evBias = 0
+        if (wasLocked) applySmoothFps()
         main.removeCallbacks(dimFocus)
         main.removeCallbacks(hideFocus)
         if (::focusBox.isInitialized) {
@@ -1484,6 +1510,59 @@ class MainActivity : ComponentActivity() {
             focusBox.visibility = View.GONE
             lockBadge.visibility = View.GONE
         }
+    }
+
+    // ---------- Brillo del usuario: botón ±, regla y el sol del cuadro ----------
+
+    private val hideDialLater = Runnable { if (!dialTouching) hideDial() }
+
+    private fun evStepSize(): Float =
+        camera?.cameraInfo?.exposureState?.exposureCompensationStep?.toFloat()?.takeIf { it > 0f } ?: (1f / 3f)
+
+    private fun showDial() {
+        evDial.step = evStepSize()
+        evDial.setValue(evBias * evStepSize())
+        evDial.alpha = 0f
+        evDial.translationY = dp(10).toFloat()
+        evDial.visibility = View.VISIBLE
+        evDial.animate().alpha(1f).translationY(0f).setDuration(180).start()
+        main.removeCallbacks(hideDialLater)
+        main.postDelayed(hideDialLater, 3500)
+    }
+
+    private fun hideDial() {
+        main.removeCallbacks(hideDialLater)
+        if (evDial.visibility != View.VISIBLE) return
+        evDial.animate().alpha(0f).translationY(dp(10).toFloat()).setDuration(160)
+            .withEndAction { evDial.visibility = View.GONE }.start()
+    }
+
+    /** Cambia el brillo elegido por el usuario (en EV). Queda puesto hasta que lo cambie. */
+    private fun setUserEv(ev: Float, fromDial: Boolean = false) {
+        val n = evSteps()
+        val step = evStepSize()
+        evBias = if (n == 0) 0 else kotlin.math.round(ev / step).toInt().coerceIn(-n, n)
+        applyExposure()
+        updateEvUi(fromDial)
+    }
+
+    /** Botón ± amarillo con el valor cuando hay brillo puesto, como en el iPhone. */
+    private fun updateEvUi(fromDial: Boolean = false) {
+        if (!::evButton.isInitialized) return
+        val ev = evBias * evStepSize()
+        if (evBias == 0) {
+            evButton.text = "±"
+            evButton.textSize = 18f
+            evButton.setTextColor(0xFFFFFFFF.toInt())
+        } else {
+            evButton.text = String.format(Locale.US, "%+.1f", ev)
+            evButton.textSize = 12f
+            evButton.setTextColor(0xFFFFD60A.toInt())
+        }
+        if (!fromDial && evDial.visibility == View.VISIBLE) evDial.setValue(ev)
+        if (focusBox.visibility == View.VISIBLE) focusBox.level = evLevel()
+        evButton.visibility = if (mode == Mode.MOON) View.GONE else View.VISIBLE
+        if (mode == Mode.MOON) hideDial()
     }
 
     // ---------- Exposición equilibrada: que no se queme lo claro ni quede negro lo oscuro ----------
@@ -1535,14 +1614,19 @@ class MainActivity : ComponentActivity() {
         val px = IntArray(w * h)
         small.getPixels(px, 0, w, 0, 0, w, h)
         small.recycle()
+        // Lo que el usuario subió o bajó a propósito no cuenta: se mide la imagen
+        // "sin su ajuste" (en gamma, 1 EV ≈ ×2^(1/2.2)), así el equilibrio no lo deshace
+        val userEv = evBias * step
+        val k = Math.pow(2.0, (-userEv / 2.2f).toDouble()).toFloat()
         var clipped = 0
         val hist = IntArray(256)
         for (c in px) {
             val r = (c shr 16) and 255
             val g = (c shr 8) and 255
             val b = c and 255
-            if (maxOf(r, maxOf(g, b)) >= 245) clipped++
-            hist[(r * 77 + g * 150 + b * 29) shr 8]++
+            val mx = maxOf(r, maxOf(g, b))
+            if (mx * k >= 245f) clipped++
+            hist[(((r * 77 + g * 150 + b * 29) shr 8) * k).toInt().coerceIn(0, 255)]++
         }
         val n = px.size
         val clip = clipped.toFloat() / n
@@ -1615,6 +1699,7 @@ class MainActivity : ComponentActivity() {
             evBias = target
             focusBox.level = evLevel()
             applyExposure()
+            updateEvUi()
             if (evBias == 0) shutter.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
     }
@@ -1992,6 +2077,8 @@ class MainActivity : ComponentActivity() {
             val pick = if (lowLight) at30.minByOrNull { it.lower } else normal
             val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
             pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+            // Bloqueo AE/AF: la exposición se queda quieta (el brillo ± sigue funcionando)
+            if (aeLocked) opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_LOCK, true)
             if (lensFacing == CameraSelector.LENS_FACING_FRONT && mode != Mode.MOON && mode != Mode.SUNSET) {
                 // Selfies: la cámara mide la luz sobre la cara (si el cel lo soporta)
                 val scenes = chars.getCameraCharacteristic(

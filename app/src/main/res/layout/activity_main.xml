@@ -244,6 +244,31 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
+        <!-- Botón ± (subir/bajar brillo) y su regla, como en el iPhone/Xiaomi -->
+        <TextView
+            android:id="@+id/evButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom|start"
+            android:layout_marginBottom="64dp"
+            android:layout_marginStart="18dp"
+            android:background="@drawable/bg_zoom"
+            android:gravity="center"
+            android:minWidth="40dp"
+            android:paddingHorizontal="8dp"
+            android:text="±"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <com.hender.fotoanimada.ExposureDialView
+            android:id="@+id/evDial"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="110dp"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/zoomBar"
             android:layout_width="wrap_content"
