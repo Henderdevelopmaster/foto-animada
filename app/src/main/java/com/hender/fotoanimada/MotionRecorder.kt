@@ -48,6 +48,10 @@ class MotionRecorder(
     @Volatile
     var chromaLut: ByteArray? = null
 
+    /** Selfie como en la pantalla: el video del Live se voltea igual que la vista previa. */
+    @Volatile
+    var mirror = false
+
     private var codec: MediaCodec? = null
     private var outFormat: MediaFormat? = null
     private var width = 0
@@ -305,6 +309,11 @@ class MotionRecorder(
     private fun copyYuv(src: ImageProxy, dst: Image) {
         val yLut = lumaLut
         val cLut = chromaLut
+        // Volteo como espejo: con el cel vertical (rotación 90/270) el izquierda-derecha de la
+        // pantalla son las filas del cuadro; acostado (0/180) son las columnas
+        val rot = src.imageInfo.rotationDegrees
+        val flipRows = mirror && (rot == 90 || rot == 270)
+        val flipCols = mirror && (rot == 0 || rot == 180)
         for (p in 0 until 3) {
             val lut = if (p == 0) yLut else cLut
             val sp = src.planes[p]
@@ -332,13 +341,15 @@ class MotionRecorder(
                         x += sPix
                     }
                 }
-                if (sPix == 1 && dPix == 1) {
-                    dBuf.position(y * dRow)
+                val dy = if (flipRows) h - 1 - y else y
+                if (sPix == 1 && dPix == 1 && !flipCols) {
+                    dBuf.position(dy * dRow)
                     dBuf.put(rowTmp, 0, w)
                 } else {
-                    val base = y * dRow
+                    val base = dy * dRow
                     for (x in 0 until w) {
-                        dBuf.put(base + x * dPix, rowTmp[x * sPix])
+                        val sx = if (flipCols) w - 1 - x else x
+                        dBuf.put(base + x * dPix, rowTmp[sx * sPix])
                     }
                 }
             }

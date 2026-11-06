@@ -827,7 +827,8 @@ class MainActivity : ComponentActivity() {
         }
         val msg = try {
             var bmp = Processing.decode(photo, 2400)
-            if (front) {
+            // Los efectos siempre quedan como en la pantalla; si la foto no vino ya volteada, se voltea aquí
+            if (front && !mirrorSelfies()) {
                 val m = android.graphics.Matrix().apply { postScale(-1f, 1f) }
                 val flipped = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
                 bmp.recycle()
@@ -1047,6 +1048,10 @@ class MainActivity : ComponentActivity() {
             Seg("12", "12 MP", "Recomendada"),
             Seg("max", "MÁX", "Hasta 200 MP · tarda más y cada foto pesa mucho"),
         ))
+        section("Selfies", CameraSettings.MIRROR, listOf(
+            Seg("mirror", "Como te ves", "Igual que en la pantalla, como en un espejo"),
+            Seg("true", "Como te ven", "Volteada: así te ven los demás"),
+        ), def = "mirror")
         section("Sonido de la cámara", CameraSettings.SOUND, listOf(
             Seg("on", "Con sonido", "Clic al tomar la foto y pitido al grabar"),
             Seg("off", "En silencio", "Sin ningún sonido"),
@@ -2039,7 +2044,7 @@ class MainActivity : ComponentActivity() {
         val file = File(cacheDir, "burst.jpg")
         playSound(MediaActionSound.SHUTTER_CLICK)
         ic.takePicture(
-            ImageCapture.OutputFileOptions.Builder(file).build(),
+            ImageCapture.OutputFileOptions.Builder(file).setMetadata(selfieMeta()).build(),
             ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
@@ -2127,6 +2132,7 @@ class MainActivity : ComponentActivity() {
 
     private fun bindCamera() {
         val provider = provider ?: return
+        recorder.mirror = front && mirrorSelfies()
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val group = when (mode) {
             Mode.VIDEO -> buildVideoGroup()
@@ -2619,6 +2625,14 @@ class MainActivity : ComponentActivity() {
 
     private val front get() = lensFacing == CameraSelector.LENS_FACING_FRONT
 
+    /** Selfies como te ves en la pantalla (espejo), salvo que el usuario elija "como te ven". */
+    private fun mirrorSelfies() = CameraSettings.get(this, CameraSettings.MIRROR, "mirror") == "mirror"
+
+    /** La foto de la frontal sale igual que la vista previa (volteada como espejo). */
+    private fun selfieMeta() = ImageCapture.Metadata().apply {
+        isReversedHorizontal = front && mirrorSelfies()
+    }
+
     /** Con la cámara frontal el "flash" es la pantalla encendida a todo brillo (del color elegido). */
     private fun wantsScreenFlash() = front && when (flashMode) {
         "on", "torch" -> true
@@ -2735,7 +2749,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val photoFile = File(cacheDir, "photo_${System.nanoTime()}.jpg")
-        val meta = ImageCapture.Metadata().apply { isReversedHorizontal = false }
+        val meta = selfieMeta()
         ic.takePicture(
             ImageCapture.OutputFileOptions.Builder(photoFile).setMetadata(meta).build(),
             ioExecutor,
@@ -2768,7 +2782,7 @@ class MainActivity : ComponentActivity() {
     private fun grab(onDone: (ByteArray?) -> Unit) {
         val ic = imageCapture ?: return onDone(null)
         val f = File(cacheDir, "grab_${System.nanoTime()}.jpg")
-        ic.takePicture(ImageCapture.OutputFileOptions.Builder(f).build(), ioExecutor,
+        ic.takePicture(ImageCapture.OutputFileOptions.Builder(f).setMetadata(selfieMeta()).build(), ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val b = f.readBytes()
