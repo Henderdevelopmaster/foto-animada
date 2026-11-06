@@ -29,8 +29,14 @@ object Enhance {
         )
     }
 
-    /** Devuelve la foto mejorada. Si algo falla, devuelve la original tal cual. */
-    fun jpeg(context: Context, jpeg: ByteArray, night: Boolean = false, sunset: Boolean = false): ByteArray {
+    /**
+     * Devuelve la foto mejorada. Si algo falla, devuelve la original tal cual.
+     * [aim] > 0 = de noche: la foto se sube igual que se veía la vista previa ([Brightness]).
+     */
+    fun jpeg(
+        context: Context, jpeg: ByteArray, night: Boolean = false, sunset: Boolean = false,
+        aim: Float = 0f, maxGain: Float = 1f,
+    ): ByteArray {
         if (!enabled(context) && !sunset && !night) return jpeg
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -38,7 +44,7 @@ object Enhance {
             // Las fotos gigantes (modo MÁX) se dejan con todo su detalle
             if (bounds.outWidth.toLong() * bounds.outHeight > 17_000_000L) return jpeg
             val bmp = Processing.decode(jpeg, 8192)
-            val out = bitmap(context, bmp, night, sunset)
+            val out = bitmap(context, bmp, night, sunset, aim, maxGain)
             val bytes = Processing.encode(out, 95)
             out.recycle()
             bytes
@@ -49,14 +55,19 @@ object Enhance {
     }
 
     /** Mejora un bitmap mutable en el lugar y lo devuelve. */
-    fun bitmap(context: Context, bmp: Bitmap, night: Boolean = false, sunset: Boolean = false): Bitmap {
+    fun bitmap(
+        context: Context, bmp: Bitmap, night: Boolean = false, sunset: Boolean = false,
+        aim: Float = 0f, maxGain: Float = 1f,
+    ): Bitmap {
         val w = bmp.width
         val h = bmp.height
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
         val faces = faces(bmp)
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
-        val rep = EnhanceCore.process(px, w, h, EnhanceCore.Options(night = night, sunset = sunset, faces = faces, threads = threads))
+        val rep = EnhanceCore.process(px, w, h, EnhanceCore.Options(
+            night = night, sunset = sunset, faces = faces, threads = threads, aim = aim, maxGain = maxGain,
+        ))
         Log.d(TAG, "${w}x$h $rep")
         val out = if (bmp.isMutable) bmp else bmp.copy(Bitmap.Config.ARGB_8888, true)
         out.setPixels(px, 0, w, 0, 0, w, h)

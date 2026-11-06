@@ -29,15 +29,22 @@ object EnhanceCore {
         val faces: List<Face> = emptyList(),
         val threads: Int = 4,
         val strength: Float = 1f,
+        /**
+         * De noche: brillo al que llevar la escena si la cámara no llegó (0 = no tocar).
+         * Es la misma cuenta que la vista previa ([Brightness]), así la foto queda como se veía.
+         */
+        val aim: Float = 0f,
+        val maxGain: Float = 1f,
     )
 
     class Report(
         val exposure: Float, val compress: Float, val glare: Float,
         val noise: Float, val faceBoost: Float, val wbR: Float, val wbB: Float,
+        val gain: Float = 1f,
     ) {
         override fun toString() = String.format(
-            java.util.Locale.US, "exp=%.2f comp=%.2f glare=%.2f noise=%.4f face=%.2f wb=%.3f/%.3f",
-            exposure, compress, glare, noise, faceBoost, wbR, wbB,
+            java.util.Locale.US, "gain=%.2f exp=%.2f comp=%.2f glare=%.2f noise=%.4f face=%.2f wb=%.3f/%.3f",
+            gain, exposure, compress, glare, noise, faceBoost, wbR, wbB,
         )
     }
 
@@ -46,7 +53,24 @@ object EnhanceCore {
     fun process(px: IntArray, w: Int, h: Int, o: Options = Options()): Report {
         val long = max(w, h)
         val f = max(1, (long + 511) / 512)
-        val s = downsample(px, w, h, f)
+        var s0 = downsample(px, w, h, f)
+        // ---- 0) De noche, si la cámara no llegó: subir con la curva de la vista previa ----
+        var gainUsed = 1f
+        if (o.aim > 0f) {
+            val g0 = Brightness.gain(Brightness.key(s0.r, s0.g, s0.b, s0.w, s0.h), o.aim, max(1f, o.maxGain))
+            // Lo que la vista previa levanta de más respecto a la mejora de noche (igual que allá)
+            val extra = Brightness.previewLift(g0) - Brightness.NIGHT_LIFT
+            if (g0 > 1.03f || extra > 0.02f) {
+                val tn = o.threads.coerceIn(1, 8)
+                val rws = (h + tn - 1) / tn
+                (0 until tn).map { ti ->
+                    Thread { Brightness.apply(px, w, ti * rws, min(h, ti * rws + rws), g0, extra) }.also { it.start() }
+                }.forEach { it.join() }
+                s0 = downsample(px, w, h, f)
+            }
+            gainUsed = g0
+        }
+        val s = s0
         val sw = s.w
         val sh = s.h
         val n = sw * sh
@@ -149,8 +173,18 @@ object EnhanceCore {
         // Escenas oscuras se aclaran con moderación (que la noche siga pareciendo noche);
         // escenas claras casi no se oscurecen (una pared blanca debe seguir blanca).
         val median = percentile(luma, 0.5f)
-        val maxUp = if (o.night || o.sunset) 1.4f else 0.6f + 0.5f * smooth(0.05f, 0.18f, median)
-        val exposure = ((target - bm) * 0.75f).coerceIn(-0.1f, maxUp) * min(k, 1f)
+        val maxUp = when {
+            o.aim > 0f -> 0.25f // ya se subió arriba, igual que en la vista previa
+            o.night || o.sunset -> 1.4f
+            else -> 0.6f + 0.5f * smooth(0.05f, 0.18f, median)
+        }
+        // De noche se mide como la vista previa (peso al centro, donde está la cara) y no por la
+        // mediana: con fondo negro la mediana es el fondo y la cara terminaba quemada u oscura.
+        val nightAim = o.aim > 0f
+        val keyL = if (nightAim) fastLog2(Brightness.key(s.r, s.g, s.b, sw, sh) + eps) else bm
+        val pivot = if (nightAim) max(bm, keyL) else bm
+        val exposure = (if (nightAim) ((fastLog2(o.aim) - keyL) * 0.75f).coerceIn(0f, maxUp)
+        else ((target - bm) * 0.75f).coerceIn(-0.1f, maxUp)) * min(k, 1f)
         val hiLo = fastLog2(0.30f)
         val hiHi = fastLog2(0.80f)
 
@@ -167,7 +201,8 @@ object EnhanceCore {
             for (y in y0 until y1) for (x in x0 until x1) { acc += base[y * sw + x]; cnt++ }
             if (cnt == 0) continue
             val fb = acc / cnt
-            val after = fb + exposure + (fb - bm) * (compress - 1f)
+            val rel = fb - pivot
+            val after = fb + exposure + (if (nightAim && rel < 0f) 0f else rel * (compress - 1f))
             val gap = (bm + exposure) - after
             val boost = ((gap - 0.25f) * 0.65f).coerceIn(0f, 0.8f) * min(k, 1f)
             if (boost <= 0.01f) continue
@@ -285,7 +320,10 @@ object EnhanceCore {
                         // 3) tono por zonas
                         val lf = fastLog2(max(yy, 0f) + eps)
                         val bse = sA.at(x) * lf + sB.at(x)
-                        var off = exposure + (bse - bm) * (compress - 1f) + sF.at(x)
+                        // Rango comprimido alrededor de lo importante; de noche solo se bajan las
+                        // luces (las sombras negras no se suben: sería subir puro grano)
+                        val rel = bse - pivot
+                        var off = exposure + (if (nightAim && rel < 0f) 0f else rel * (compress - 1f)) + sF.at(x)
                         // Lo que ya está claro no se sube (ni en la cara): así no se quema
                         if (off > 0f) off *= 1f - smooth(hiLo, hiHi, bse)
                         val ratio = fastExp2(off)
@@ -320,7 +358,7 @@ object EnhanceCore {
             }.also { it.start() }
         }
         workers.forEach { it.join() }
-        return Report(exposure, compress, glareAmp * glareStrength, noise, faceBoost, wbR, wbB)
+        return Report(exposure, compress, glareAmp * glareStrength, noise, faceBoost, wbR, wbB, gainUsed)
     }
 
     // ---------------------------------------------------------------- utilidades

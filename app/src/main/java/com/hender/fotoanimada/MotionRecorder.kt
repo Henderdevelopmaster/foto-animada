@@ -41,6 +41,13 @@ class MotionRecorder(
     @Volatile
     var audio: AudioRingRecorder? = null
 
+    /** De noche: el video sube de brillo igual que la vista previa (tablas de [Brightness]). */
+    @Volatile
+    var lumaLut: ByteArray? = null
+
+    @Volatile
+    var chromaLut: ByteArray? = null
+
     private var codec: MediaCodec? = null
     private var outFormat: MediaFormat? = null
     private var width = 0
@@ -296,7 +303,10 @@ class MotionRecorder(
 
     /** Copia YUV_420_888 de la cámara al Image de entrada del encoder respetando strides. */
     private fun copyYuv(src: ImageProxy, dst: Image) {
+        val yLut = lumaLut
+        val cLut = chromaLut
         for (p in 0 until 3) {
+            val lut = if (p == 0) yLut else cLut
             val sp = src.planes[p]
             val dp = dst.planes[p]
             val w = if (p == 0) width else width / 2
@@ -315,6 +325,13 @@ class MotionRecorder(
             for (y in 0 until h) {
                 sBuf.position((y + oy) * sRow + ox * sPix)
                 sBuf.get(rowTmp, 0, srcRowLen)
+                if (lut != null) {
+                    var x = 0
+                    while (x < srcRowLen) {
+                        rowTmp[x] = lut[rowTmp[x].toInt() and 255]
+                        x += sPix
+                    }
+                }
                 if (sPix == 1 && dPix == 1) {
                     dBuf.position(y * dRow)
                     dBuf.put(rowTmp, 0, w)

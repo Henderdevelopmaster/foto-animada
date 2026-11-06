@@ -373,6 +373,8 @@ class MainActivity : ComponentActivity() {
             clearFocusLock()
             lowLight = false
             autoEv = 0
+            darkTicks = 0
+            setDigitalGain(1f)
             // Giro 3D de la vista, como el iPhone al cambiar de cámara
             freezePreview()
             previewBox.animate().rotationY(90f).setDuration(150).withEndAction {
@@ -1232,15 +1234,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applyPreviewFilter() {
-        // Filtros que necesitan shader (Android 13+): se aplican a toda la vista previa
-        val fx = when {
-            mode == Mode.NIGHT_VISION -> InstantFx.nightVisionPreview(previewView.width, previewView.height)
-            mode == Mode.INSTANT && instantLook.fx -> InstantFx.preview(instantLook, previewView.width, previewView.height)
-            else -> null
-        }
-        val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
-        val tone = if (fx == null && photoLike && Enhance.enabled(this)) InstantFx.tonePreview() else null
-        if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
+        val fx = applyTone()
         val cf = when {
             fx != null -> null
             mode == Mode.NIGHT_VISION -> android.graphics.ColorMatrixColorFilter(InstantFx.nightVisionMatrix())
@@ -1264,6 +1258,33 @@ class MainActivity : ComponentActivity() {
         }
         val active = if (mode == Mode.INSTANT) instantLook != InstantLook.NONE else filter != PhotoFilter.ORIGINAL
         filterButton.setColorFilter(if (active) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
+    }
+
+    /**
+     * Efecto de toda la vista previa: los filtros con shader (Android 13+) o el tono de la
+     * mejora, y de noche el brillo digital (lo mismo que llevará la foto). Devuelve el filtro con shader.
+     */
+    private fun applyTone(): android.graphics.RenderEffect? {
+        val fx = when {
+            mode == Mode.NIGHT_VISION -> InstantFx.nightVisionPreview(previewView.width, previewView.height)
+            mode == Mode.INSTANT && instantLook.fx -> InstantFx.preview(instantLook, previewView.width, previewView.height)
+            else -> null
+        }
+        val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
+        val night = nightNow() && gainModes()
+        val tone = if (fx == null && photoLike && (Enhance.enabled(this) || night)) {
+            val g = if (night) digitalGain else 1f
+            InstantFx.tonePreview(
+                gain = g,
+                // De noche casi no se levanta (la foto de noche tampoco) y, con mucho brillo,
+                // se suaviza el grano en vez de marcarlo
+                lift = if (night) Brightness.previewLift(g) else 1.1f,
+                sharp = if (night) 0.45f - 0.85f * ((g - 1.2f) / 1.8f).coerceIn(0f, 1f) else 0.45f,
+            )
+        } else null
+        if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
+        updateNightBadge()
+        return fx
     }
 
     private fun findTexture(v: View): TextureView? {
@@ -1543,6 +1564,7 @@ class MainActivity : ComponentActivity() {
         val step = evStepSize()
         evBias = if (n == 0) 0 else kotlin.math.round(ev / step).toInt().coerceIn(-n, n)
         applyExposure()
+        refreshGainNow()
         updateEvUi(fromDial)
     }
 
@@ -1550,6 +1572,7 @@ class MainActivity : ComponentActivity() {
     private fun updateEvUi(fromDial: Boolean = false) {
         if (!::evButton.isInitialized) return
         val ev = evBias * evStepSize()
+        evButton.isActivated = evBias != 0
         if (evBias == 0) {
             evButton.text = "±"
             evButton.textSize = 18f
@@ -1584,39 +1607,66 @@ class MainActivity : ComponentActivity() {
     private fun balanceModes() = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT ||
         mode == Mode.EFFECTS || mode == Mode.VIDEO
 
+    /** Modos donde la vista previa lleva el brillo digital de noche (los mismos donde la foto lo lleva). */
+    private fun gainModes() = mode == Mode.PHOTO || mode == Mode.PORTRAIT ||
+        (mode == Mode.INSTANT && !instantLook.fx) || (mode == Mode.NIGHT && Enhance.enabled(this))
+
+    /** De noche de verdad: la cámara ya expone todo lo que puede (o es el modo Noche). */
+    private fun nightNow() = lowLight || mode == Mode.NIGHT
+
+    /** La imagen real de la vista previa, chiquitica (sin filtros ni brillo digital). */
+    private fun sample(w: Int, h: Int): IntArray? {
+        val tv = findTexture(previewView) ?: return null
+        val bmp = try { tv.getBitmap(w, h) } catch (e: Exception) { null } ?: return null
+        if (bmp.width != w || bmp.height != h) {
+            bmp.recycle()
+            return null
+        }
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, 0, 0, w, h)
+        bmp.recycle()
+        return px
+    }
+
     /**
      * Mira la imagen real (pequeñita) dos veces por segundo:
+     *  - de noche, si la cámara ya no da más, sube el brillo por su cuenta (vista previa, foto y Live);
      *  - si hay zonas grandes quemadas, baja la exposición (lo que hace el iPhone);
      *  - si todo quedó muy oscuro y hay margen, la sube;
      *  - si no, vuelve despacio a lo que decide la cámara.
-     * Las sombras luego las levanta la mejora (y la vista previa ya lo muestra).
      */
     private fun balanceExposure() {
         val cam = camera ?: return
-        if (!balanceModes()) {
-            if (autoEv != 0) {
-                autoEv = 0
-                applyExposure()
-            }
-            return
+        val balance = balanceModes()
+        val gainOn = gainModes()
+        if (!balance && autoEv != 0) {
+            autoEv = 0
+            applyExposure()
         }
+        if (!gainOn) setDigitalGain(1f)
+        if (!balance && !gainOn) return
+        if (busy || frozen || screenFlash.visibility == View.VISIBLE) return
+        val st = cam.cameraInfo.exposureState
+        val canEv = st.isExposureCompensationSupported && st.exposureCompensationStep.toFloat() > 0f
+        val step = if (canEv) st.exposureCompensationStep.toFloat() else 1f / 3f
+        val w = 72
+        val h = 96
+        val px = sample(w, h) ?: return
+        val userEv = evBias * step
+
+        // 1) Brillo de noche (no depende de tocar la pantalla: con el ± a tope tiene que verse)
+        val key = Brightness.key(px, w, h)
+        watchDarkness(key, userEv)
+        // Con bloqueo AE/AF el brillo se queda quieto (solo lo mueve el ±)
+        if (gainOn && !aeLocked) updateDigitalGain(key, userEv, immediate = false)
+
+        // 2) Equilibrio de la cámara
+        if (!balance || !canEv) return
         // Después de tocar la pantalla manda el usuario por un rato
         if (aeLocked || focusBox.visibility == View.VISIBLE ||
             android.os.SystemClock.uptimeMillis() - lastTapAt < 7000) return
-        if (busy || frozen || screenFlash.visibility == View.VISIBLE) return
-        val st = cam.cameraInfo.exposureState
-        if (!st.isExposureCompensationSupported) return
-        val step = st.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: return
-        val tv = findTexture(previewView) ?: return
-        val small = try { tv.getBitmap(72, 96) } catch (e: Exception) { null } ?: return
-        val w = small.width
-        val h = small.height
-        val px = IntArray(w * h)
-        small.getPixels(px, 0, w, 0, 0, w, h)
-        small.recycle()
         // Lo que el usuario subió o bajó a propósito no cuenta: se mide la imagen
         // "sin su ajuste" (en gamma, 1 EV ≈ ×2^(1/2.2)), así el equilibrio no lo deshace
-        val userEv = evBias * step
         val k = Math.pow(2.0, (-userEv / 2.2f).toDouble()).toFloat()
         var clipped = 0
         val hist = IntArray(256)
@@ -1669,6 +1719,98 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ---------- Noche: brillo digital cuando la cámara ya no da más ----------
+
+    /** Cuánto se sube la imagen por software (×, en gamma). 1 = nada. */
+    private var digitalGain = 1f
+    private var darkTicks = 0
+    private var nightBadge: TextView? = null
+
+    /**
+     * Por si la cámara no avisa bien (la frontal a veces se queda corta de ISO o de tiempo):
+     * imagen muy oscura con la cámara ya exponiendo largo = es de noche.
+     */
+    private fun watchDarkness(key: Float, userEv: Float) {
+        if (lowLight || !(mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT)) {
+            darkTicks = 0
+            return
+        }
+        // Lo que el usuario bajó a propósito no cuenta como "oscuro"
+        val plain = key / Brightness.evFactor(userEv)
+        val longExposure = lastExpNs >= normalCapNs / 2 || lastIso >= darkIso / 2
+        darkTicks = if (plain < 0.10f && longExposure) darkTicks + 1 else 0
+        if (darkTicks >= 3) {
+            darkTicks = 0
+            lowLight = true
+            applySmoothFps()
+            applyPreviewFilter()
+        }
+    }
+
+    private fun updateDigitalGain(key: Float, userEv: Float, immediate: Boolean) {
+        val target = if (nightNow()) Brightness.gain(key, Brightness.aim(userEv), Brightness.maxGain(userEv)) else 1f
+        setDigitalGain(if (immediate) target else digitalGain + (target - digitalGain) * 0.5f)
+    }
+
+    private fun setDigitalGain(g: Float) {
+        val v = if (g < 1.04f) 1f else g
+        if (v == digitalGain) return
+        // Cambios chiquitos no se aplican (sin parpadeo por el grano de la imagen)
+        if (v != 1f && digitalGain != 1f && kotlin.math.abs(v - digitalGain) < 0.04f * digitalGain) return
+        digitalGain = v
+        recorder.lumaLut = if (v > 1f) Brightness.lumaLut(v, Brightness.previewLift(v)) else null
+        recorder.chromaLut = if (v > 1f) Brightness.chromaLut(v) else null
+        applyTone()
+    }
+
+    /** El usuario movió el brillo: la vista previa responde ya, sin esperar el siguiente vistazo. */
+    private fun refreshGainNow() {
+        if (!gainModes() || !nightNow() || busy || frozen) return
+        val px = sample(48, 64) ?: return
+        updateDigitalGain(Brightness.key(px, 48, 64), evBias * evStepSize(), immediate = true)
+    }
+
+    /** Lunita amarilla arriba, como el modo noche del iPhone: avisa que la cámara está ayudando. */
+    private fun updateNightBadge() {
+        val show = lowLight && gainModes() && mode != Mode.NIGHT
+        val badge = nightBadge ?: run {
+            if (!show || !::evButton.isInitialized) return
+            val holder = evButton.parent as? FrameLayout ?: return
+            TextView(this).apply {
+                text = "Noche"
+                textSize = 12f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(0xFFFFD60A.toInt())
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(9), dp(5), dp(11), dp(5))
+                compoundDrawablePadding = dp(5)
+                setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_night, 0, 0, 0)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(0x8C000000.toInt())
+                }
+                alpha = 0f
+                visibility = View.GONE
+                setOnClickListener { showDial() }
+                holder.addView(this, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                    topMargin = dp(12)
+                    marginStart = dp(14)
+                })
+                nightBadge = this
+            }
+        }
+        if (show && badge.visibility != View.VISIBLE) {
+            badge.visibility = View.VISIBLE
+            badge.animate().cancel()
+            badge.animate().alpha(1f).setDuration(220).start()
+        } else if (!show && badge.visibility == View.VISIBLE) {
+            badge.animate().cancel()
+            badge.animate().alpha(0f).setDuration(220).withEndAction { badge.visibility = View.GONE }.start()
+        }
+    }
+
     private fun log2(v: Float) = (kotlin.math.ln(v.toDouble()) / kotlin.math.ln(2.0)).toFloat()
 
     /** Pasos de compensación disponibles (máximo ±2 EV, como el iPhone). */
@@ -1699,6 +1841,7 @@ class MainActivity : ComponentActivity() {
             evBias = target
             focusBox.level = evLevel()
             applyExposure()
+            refreshGainNow()
             updateEvUi()
             if (evBias == 0) shutter.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
@@ -2012,6 +2155,10 @@ class MainActivity : ComponentActivity() {
     @Volatile private var darkIso = 2800
     private var darkSince = 0L
     private var brightSince = 0L
+    @Volatile private var lastIso = 0
+    @Volatile private var lastExpNs = 0L
+    /** Tiempo máximo por cuadro con los fps normales (1/20 s si el cel tiene ese rango). */
+    @Volatile private var normalCapNs = 50_000_000L
 
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     private fun watchExposure(b: Preview.Builder) {
@@ -2030,11 +2177,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onExposure(iso: Int, expNs: Long) {
+        lastIso = iso
+        lastExpNs = expNs
         val now = android.os.SystemClock.uptimeMillis()
+        val cap = normalCapNs
         if (!lowLight) {
-            // "Oscuro" = la cámara ya está al tope de sensibilidad (el tope cambia según la cámara:
-            // la frontal llega mucho más bajo que la de atrás)
-            if (iso >= darkIso && expNs >= 28_000_000L) {
+            // "Oscuro" = la cámara ya expone todo el tiempo que le dejamos, o ya está al tope de
+            // sensibilidad. Se mira sobre todo el tiempo: la frontal se queda corta de ISO y con
+            // solo el ISO nunca se enteraba (por eso quedaba negra aunque se subiera el brillo)
+            if (expNs >= cap * 8 / 10 || (iso >= darkIso && expNs >= 28_000_000L)) {
                 if (darkSince == 0L) darkSince = now
                 if (now - darkSince > 1200) {
                     lowLight = true
@@ -2043,7 +2194,8 @@ class MainActivity : ComponentActivity() {
                 }
             } else darkSince = 0
         } else {
-            if (iso <= 1000) {
+            // Claro de verdad: pudiendo exponer más, la cámara eligió poco tiempo y poco ISO
+            if (expNs < cap / 2 && iso < darkIso / 2) {
                 if (brightSince == 0L) brightSince = now
                 if (now - brightSince > 1500) {
                     lowLight = false
@@ -2074,6 +2226,7 @@ class MainActivity : ComponentActivity() {
             // Normal: hasta 1/20 s por cuadro (nítido aunque la gente se mueva).
             // Solo cuando ya está al tope de sensibilidad se deja exponer más tiempo.
             val normal = at30.minByOrNull { kotlin.math.abs(it.lower - 20) * 2 + (if (it.lower < 20) 1 else 0) }
+            normalCapNs = 1_000_000_000L / (normal?.lower ?: 20).coerceAtLeast(1)
             val pick = if (lowLight) at30.minByOrNull { it.lower } else normal
             val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
             pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
@@ -2523,6 +2676,10 @@ class MainActivity : ComponentActivity() {
         if (mode == Mode.PORTRAIT || mode == Mode.NIGHT || mode == Mode.NIGHT_VISION) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
         val dark = lowLight
+        // De noche la foto se sube igual que la vista previa (con el brillo que eligió el usuario)
+        val userEv = evBias * evStepSize()
+        val aim = if (lowLight || currentMode == Mode.NIGHT) Brightness.aim(userEv) else 0f
+        val maxG = Brightness.maxGain(userEv)
         if (live) {
             livePill.visibility = View.VISIBLE
             livePill.alpha = 1f
@@ -2546,8 +2703,10 @@ class MainActivity : ComponentActivity() {
             }
             saveExecutor.execute {
                 when (currentMode) {
-                    Mode.INSTANT -> saveInstant(p)
-                    Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") { Processing.portrait(Enhance.jpeg(this, it), currentFilter) }
+                    Mode.INSTANT -> saveInstant(p, dark, aim, maxG)
+                    Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") {
+                        Processing.portrait(Enhance.jpeg(this, it, night = dark, aim = aim, maxGain = maxG), currentFilter)
+                    }
                     Mode.EFFECTS -> saveEffectPhoto(p, front)
                     Mode.SUNSET -> saveProcessed(p, "_ATARDECER") {
                         MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, sunset = true), currentFilter)
@@ -2559,10 +2718,11 @@ class MainActivity : ComponentActivity() {
                         Processing.encode(nv, 94).also { nv.recycle() }
                     }
                     Mode.NIGHT -> saveProcessed(p, "_NOCHE") {
-                        if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, night = true), currentFilter)
+                        if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(
+                            Enhance.jpeg(this, it, night = true, aim = aim, maxGain = maxG), currentFilter)
                         else Processing.night(it, currentFilter)
                     }
-                    else -> saveResult(p, c, live, currentFilter, dark)
+                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG)
                 }
             }
         }
@@ -2624,7 +2784,10 @@ class MainActivity : ComponentActivity() {
             })
     }
 
-    private fun saveResult(photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false) {
+    private fun saveResult(
+        photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false,
+        aim: Float = 0f, maxG: Float = 1f,
+    ) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
             return
@@ -2638,7 +2801,7 @@ class MainActivity : ComponentActivity() {
             finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
             // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
             if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark) {
-                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo, night = dark), f)
+                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo, night = dark, aim = aim, maxGain = maxG), f)
                 val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
                 MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
                 refreshThumbnail()
@@ -2649,14 +2812,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun saveInstant(photo: ByteArray?) {
+    private fun saveInstant(photo: ByteArray?, dark: Boolean = false, aim: Float = 0f, maxG: Float = 1f) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
             return
         }
         try {
             val src = Processing.decode(photo, 1600)
-            if (Enhance.enabled(this)) Enhance.bitmap(this, src)
+            if (Enhance.enabled(this) || dark) Enhance.bitmap(this, src, night = dark, aim = aim, maxGain = maxG)
             val bmp = InstantStyle.render(listOf(src), instantLook, instantShape, instantFrame, caption)
             src.recycle()
             val uri = MotionPhotoWriter.save(this, Processing.encode(bmp, 93), null, "_INSTANT")

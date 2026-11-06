@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Botón ±: círculo normal; con brillo puesto, píldora con borde amarillo (cabe el valor) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_activated="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#80000000" />
+            <stroke android:width="1dp" android:color="#FFD60A" />
+            <corners android:radius="20dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#66000000" />
+        </shape>
+    </item>
+</selector>

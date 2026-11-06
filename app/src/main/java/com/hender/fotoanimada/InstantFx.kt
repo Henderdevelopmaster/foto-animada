@@ -104,17 +104,24 @@ half4 main(float2 p) {
 
     private const val TONE = """
 uniform shader content;
+uniform float gain;
+uniform float lift;
+uniform float sharp;
 half4 main(float2 p) {
     float3 x = float3(content.eval(p).rgb);
-    // Nitidez suave: realza el borde respecto a los 4 vecinos
+    // Nitidez suave respecto a los 4 vecinos (con sharp negativo, suaviza el grano de noche)
     float3 n = (float3(content.eval(p + float2(1.5, 0.0)).rgb) + float3(content.eval(p - float2(1.5, 0.0)).rgb) +
                 float3(content.eval(p + float2(0.0, 1.5)).rgb) + float3(content.eval(p - float2(0.0, 1.5)).rgb)) * 0.25;
-    x = clamp(x + 0.45 * (x - n), 0.0, 1.0);
+    x = clamp(x + sharp * (x - n), 0.0, 1.0);
+    float l = max(dot(x, float3(0.299, 0.587, 0.114)), 0.002);
+    // Brillo de noche: sube lo oscuro ×gain y deja el blanco en blanco (igual que la foto)
+    float y = l * gain / (1.0 + (gain - 1.0) * l);
     // Sombras levantadas (como la mejora automática), luces casi intactas
-    float l = dot(x, float3(0.299, 0.587, 0.114));
-    float lifted = l + 1.1 * l * (1.0 - l) * (1.0 - l);
-    float k = lifted / max(l, 0.002);
-    return half4(half3(min(x * k, float3(1.0))), 1.0);
+    y = y + lift * y * (1.0 - y) * (1.0 - y);
+    // Mismo factor en los tres canales, sin pasarse del canal más alto (no cambia el color)
+    float m = max(max(x.r, x.g), max(x.b, 0.002));
+    float k = min(y / l, 1.0 / m);
+    return half4(half3(x * k), 1.0);
 }
 """
 
@@ -122,14 +129,21 @@ half4 main(float2 p) {
      * Vista previa con las sombras levantadas, parecida a como queda la foto
      * después de la mejora automática (las luces casi no se tocan).
      */
-    fun tonePreview(): RenderEffect? {
+    fun tonePreview(gain: Float = 1f, lift: Float = 1.1f, sharp: Float = 0.45f): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33) return null
         return try {
-            RenderEffect.createRuntimeShaderEffect(RuntimeShader(TONE), "content")
+            val sh = (toneShader ?: RuntimeShader(TONE).also { toneShader = it }) as RuntimeShader
+            sh.setFloatUniform("gain", gain)
+            sh.setFloatUniform("lift", lift)
+            sh.setFloatUniform("sharp", sharp)
+            RenderEffect.createRuntimeShaderEffect(sh, "content")
         } catch (e: Throwable) {
             null
         }
     }
+
+    /** Se compila una sola vez (de noche se actualiza seguido con el brillo). */
+    private var toneShader: Any? = null
 
     /** Visión nocturna en vivo (verde, con grano y viñeta). */
     fun nightVisionPreview(w: Int, h: Int): RenderEffect? {
