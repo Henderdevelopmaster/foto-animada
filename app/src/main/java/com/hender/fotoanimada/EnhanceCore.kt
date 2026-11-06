@@ -227,7 +227,7 @@ object EnhanceCore {
         val noise = estimateNoise(px, w, h, half, hw, hh)
         val t = max(noise * 2.2f, 0.004f)
         val keep = if (o.night) 0.30f else 0.45f
-        val sharpen = if (o.night) 0.05f else 0.18f
+        val sharpen = if (o.night) 0.08f else 0.26f
         val chromaMix = (if (o.night || noise > 0.012f) 0.9f else 0.65f) * min(k, 1f)
 
         // ---- 5) Pasada final a resolución completa (en paralelo por filas) ----

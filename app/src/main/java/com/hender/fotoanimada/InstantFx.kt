@@ -105,13 +105,16 @@ half4 main(float2 p) {
     private const val TONE = """
 uniform shader content;
 half4 main(float2 p) {
-    half4 c = content.eval(p);
-    float3 x = float3(c.rgb);
+    float3 x = float3(content.eval(p).rgb);
+    // Nitidez suave: realza el borde respecto a los 4 vecinos
+    float3 n = (float3(content.eval(p + float2(1.5, 0.0)).rgb) + float3(content.eval(p - float2(1.5, 0.0)).rgb) +
+                float3(content.eval(p + float2(0.0, 1.5)).rgb) + float3(content.eval(p - float2(0.0, 1.5)).rgb)) * 0.25;
+    x = clamp(x + 0.45 * (x - n), 0.0, 1.0);
+    // Sombras levantadas (como la mejora automática), luces casi intactas
     float l = dot(x, float3(0.299, 0.587, 0.114));
     float lifted = l + 1.1 * l * (1.0 - l) * (1.0 - l);
     float k = lifted / max(l, 0.002);
-    float3 y = min(x * k, float3(1.0));
-    return half4(half3(y), c.a);
+    return half4(half3(min(x * k, float3(1.0))), 1.0);
 }
 """
 

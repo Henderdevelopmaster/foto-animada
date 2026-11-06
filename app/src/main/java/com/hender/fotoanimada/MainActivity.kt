@@ -351,6 +351,7 @@ class MainActivity : ComponentActivity() {
             engine.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
             clearFocusLock()
             lowLight = false
+            autoEv = 0
             // Giro 3D de la vista, como el iPhone al cambiar de cámara
             freezePreview()
             previewBox.animate().rotationY(90f).setDuration(150).withEndAction {
@@ -374,6 +375,8 @@ class MainActivity : ComponentActivity() {
         updateAudio()
         refreshThumbnail()
         main.postDelayed(qrScan, 1200)
+        main.removeCallbacks(balanceTick)
+        main.postDelayed(balanceTick, 900)
     }
 
     // ---------- Botones de volumen = obturador (mantener = video, como el iPhone) ----------
@@ -427,6 +430,7 @@ class MainActivity : ComponentActivity() {
         volHeld = false
         clearFocusLock()
         main.removeCallbacks(qrScan)
+        main.removeCallbacks(balanceTick)
         if (timelapsing) stopTimelapse()
         if (quickTaking) stopQuickTake()
         if (effectRecording) stopEffectRec()
@@ -1213,7 +1217,7 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
         val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
-        val tone = if (fx == null && !lowLight && photoLike && Enhance.enabled(this)) InstantFx.tonePreview() else null
+        val tone = if (fx == null && photoLike && Enhance.enabled(this)) InstantFx.tonePreview() else null
         if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
         val cf = when {
             fx != null -> null
@@ -1223,22 +1227,7 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT -> instantLook.colorFilter()
             else -> filter.colorFilter()
         }
-        // Con poca luz la vista se aclara (la foto luego sale igual de clara con la mejora de noche)
-        val boost = lowLight && fx == null && mode != Mode.NIGHT_VISION && mode != Mode.MOON &&
-            mode != Mode.VIDEO && mode != Mode.TIMELAPSE
-        val finalCf = if (boost) {
-            val m = android.graphics.ColorMatrix()
-            (cf as? android.graphics.ColorMatrixColorFilter)?.getColorMatrix(m)
-            val gain = android.graphics.ColorMatrix(floatArrayOf(
-                2.1f, 0f, 0f, 0f, 6f,
-                0f, 2.1f, 0f, 0f, 6f,
-                0f, 0f, 2.1f, 0f, 6f,
-                0f, 0f, 0f, 1f, 0f,
-            ))
-            if (cf is android.graphics.ColorMatrixColorFilter) m.postConcat(gain) else m.set(gain)
-            android.graphics.ColorMatrixColorFilter(m)
-        } else cf
-        findTexture(previewView)?.setLayerPaint(finalCf?.let { Paint().apply { colorFilter = it } })
+        findTexture(previewView)?.setLayerPaint(cf?.let { Paint().apply { colorFilter = it } })
         shapeMask.shape = instantShape
         for (i in 0 until filterList.childCount) {
             val item = filterList.getChildAt(i) as LinearLayout
@@ -1437,6 +1426,8 @@ class MainActivity : ComponentActivity() {
         aeLocked = false
         lockBadge.visibility = View.GONE
         evBias = 0
+        autoEv = 0
+        lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
         val point = previewView.meteringPointFactory.createPoint(x, y)
         try {
@@ -1457,6 +1448,8 @@ class MainActivity : ComponentActivity() {
         val cam = camera ?: return
         if (mode == Mode.MOON) return
         evBias = 0
+        autoEv = 0
+        lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
         val point = previewView.meteringPointFactory.createPoint(x, y)
         try {
@@ -1492,6 +1485,107 @@ class MainActivity : ComponentActivity() {
             lockBadge.visibility = View.GONE
         }
     }
+
+    // ---------- Exposición equilibrada: que no se queme lo claro ni quede negro lo oscuro ----------
+
+    private var autoEv = 0       // pasos que pone la app sola, encima de la cámara
+    private var lastTapAt = 0L
+
+    private val balanceTick = object : Runnable {
+        override fun run() {
+            try {
+                balanceExposure()
+            } catch (e: Exception) {
+                Log.w(TAG, "Equilibrio", e)
+            }
+            main.postDelayed(this, 500)
+        }
+    }
+
+    private fun balanceModes() = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT ||
+        mode == Mode.EFFECTS || mode == Mode.VIDEO
+
+    /**
+     * Mira la imagen real (pequeñita) dos veces por segundo:
+     *  - si hay zonas grandes quemadas, baja la exposición (lo que hace el iPhone);
+     *  - si todo quedó muy oscuro y hay margen, la sube;
+     *  - si no, vuelve despacio a lo que decide la cámara.
+     * Las sombras luego las levanta la mejora (y la vista previa ya lo muestra).
+     */
+    private fun balanceExposure() {
+        val cam = camera ?: return
+        if (!balanceModes()) {
+            if (autoEv != 0) {
+                autoEv = 0
+                applyExposure()
+            }
+            return
+        }
+        // Después de tocar la pantalla manda el usuario por un rato
+        if (aeLocked || focusBox.visibility == View.VISIBLE ||
+            android.os.SystemClock.uptimeMillis() - lastTapAt < 7000) return
+        if (busy || frozen || screenFlash.visibility == View.VISIBLE) return
+        val st = cam.cameraInfo.exposureState
+        if (!st.isExposureCompensationSupported) return
+        val step = st.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: return
+        val tv = findTexture(previewView) ?: return
+        val small = try { tv.getBitmap(72, 96) } catch (e: Exception) { null } ?: return
+        val w = small.width
+        val h = small.height
+        val px = IntArray(w * h)
+        small.getPixels(px, 0, w, 0, 0, w, h)
+        small.recycle()
+        var clipped = 0
+        val hist = IntArray(256)
+        for (c in px) {
+            val r = (c shr 16) and 255
+            val g = (c shr 8) and 255
+            val b = c and 255
+            if (maxOf(r, maxOf(g, b)) >= 245) clipped++
+            hist[(r * 77 + g * 150 + b * 29) shr 8]++
+        }
+        val n = px.size
+        val clip = clipped.toFloat() / n
+        fun pct(q: Float): Float {
+            var acc = 0
+            val target = (n * q).toInt()
+            for (v in 0 until 256) {
+                acc += hist[v]
+                if (acc >= target) return v / 255f
+            }
+            return 1f
+        }
+        val median = maxOf(pct(0.5f), 0.008f)
+        val p98 = pct(0.98f)
+        val moving = recording != null || quickTaking
+        val evDelta = when {
+            // Quemado: bajar seguro (más rápido cuanto más quemado)
+            clip > 0.03f -> -(when {
+                clip > 0.15f -> 0.67f
+                clip > 0.06f -> 0.5f
+                else -> 0.34f
+            })
+            // Muy oscuro y con margen arriba: subir (la imagen está en gamma: ~2.2 por paso)
+            median < 0.11f && clip < 0.012f -> (2.2f * log2(0.15f / median) * 0.5f).coerceIn(0.17f, 1f)
+            // Nada raro: volver poco a poco a lo que decide la cámara
+            autoEv < 0 && clip < 0.008f && p98 < 0.86f -> step
+            autoEv > 0 && median > 0.28f -> -step
+            else -> 0f
+        }
+        if (evDelta == 0f) return
+        var delta = kotlin.math.round(evDelta / step).toInt()
+        if (delta == 0) delta = if (evDelta > 0) 1 else -1
+        if (moving) delta = delta.coerceIn(-1, 1) // grabando: sin saltos bruscos
+        val maxDown = kotlin.math.round(2.5f / step).toInt()
+        val maxUp = kotlin.math.round((if (lowLight) 0.5f else 1.5f) / step).toInt()
+        val next = (autoEv + delta).coerceIn(-maxDown, maxUp)
+        if (next != autoEv) {
+            autoEv = next
+            applyExposure()
+        }
+    }
+
+    private fun log2(v: Float) = (kotlin.math.ln(v.toDouble()) / kotlin.math.ln(2.0)).toFloat()
 
     /** Pasos de compensación disponibles (máximo ±2 EV, como el iPhone). */
     private fun evSteps(): Int {
@@ -1892,13 +1986,14 @@ class MainActivity : ComponentActivity() {
                 android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200
             darkIso = minOf(2800, (isoTop * 0.7f).toInt())
             val at30 = ranges.filter { it.upper == 30 }
-            // La cámara decide: con luz va a 30 fps; de noche baja un poco para recoger más luz.
-            // (Fijarla en 30 hacía que todo saliera oscuro de noche.)
-            val pick = at30.minByOrNull { it.lower }
+            // Normal: hasta 1/20 s por cuadro (nítido aunque la gente se mueva).
+            // Solo cuando ya está al tope de sensibilidad se deja exponer más tiempo.
+            val normal = at30.minByOrNull { kotlin.math.abs(it.lower - 20) * 2 + (if (it.lower < 20) 1 else 0) }
+            val pick = if (lowLight) at30.minByOrNull { it.lower } else normal
             val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
             pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
-            if (mode != Mode.MOON && mode != Mode.SUNSET) {
-                // La cámara mide la luz sobre las caras (si el cel lo soporta)
+            if (lensFacing == CameraSelector.LENS_FACING_FRONT && mode != Mode.MOON && mode != Mode.SUNSET) {
+                // Selfies: la cámara mide la luz sobre la cara (si el cel lo soporta)
                 val scenes = chars.getCameraCharacteristic(
                     android.hardware.camera2.CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
                 if (scenes?.contains(android.hardware.camera2.CameraMetadata.CONTROL_SCENE_MODE_FACE_PRIORITY) == true) {
@@ -1951,7 +2046,7 @@ class MainActivity : ComponentActivity() {
             mode == Mode.MOON && !manualSensor() -> st.exposureCompensationRange.lower
             else -> 0
         }
-        val idx = (base + if (mode == Mode.MOON) 0 else evBias)
+        val idx = (base + if (mode == Mode.MOON) 0 else evBias + autoEv)
             .coerceIn(st.exposureCompensationRange.lower, st.exposureCompensationRange.upper)
         try {
             cam.cameraControl.setExposureCompensationIndex(idx)
