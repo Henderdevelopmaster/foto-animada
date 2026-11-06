@@ -102,6 +102,32 @@ half4 main(float2 p) {
 }
 """
 
+    private const val TONE = """
+uniform shader content;
+half4 main(float2 p) {
+    half4 c = content.eval(p);
+    float3 x = float3(c.rgb);
+    float l = dot(x, float3(0.299, 0.587, 0.114));
+    float lifted = l + 1.1 * l * (1.0 - l) * (1.0 - l);
+    float k = lifted / max(l, 0.002);
+    float3 y = min(x * k, float3(1.0));
+    return half4(half3(y), c.a);
+}
+"""
+
+    /**
+     * Vista previa con las sombras levantadas, parecida a como queda la foto
+     * después de la mejora automática (las luces casi no se tocan).
+     */
+    fun tonePreview(): RenderEffect? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        return try {
+            RenderEffect.createRuntimeShaderEffect(RuntimeShader(TONE), "content")
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
     /** Visión nocturna en vivo (verde, con grano y viñeta). */
     fun nightVisionPreview(w: Int, h: Int): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33 || w <= 0 || h <= 0) return null

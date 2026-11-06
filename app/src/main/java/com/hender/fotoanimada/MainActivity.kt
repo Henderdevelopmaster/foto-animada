@@ -1212,7 +1212,9 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT && instantLook.fx -> InstantFx.preview(instantLook, previewView.width, previewView.height)
             else -> null
         }
-        if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx)
+        val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
+        val tone = if (fx == null && !lowLight && photoLike && Enhance.enabled(this)) InstantFx.tonePreview() else null
+        if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
         val cf = when {
             fx != null -> null
             mode == Mode.NIGHT_VISION -> android.graphics.ColorMatrixColorFilter(InstantFx.nightVisionMatrix())
@@ -1890,15 +1892,13 @@ class MainActivity : ComponentActivity() {
                 android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper ?: 3200
             darkIso = minOf(2800, (isoTop * 0.7f).toInt())
             val at30 = ranges.filter { it.upper == 30 }
-            // La frontal tiene sensor pequeño: necesita poder exponer más tiempo
-            // siempre, si no la imagen queda oscurísima adentro
-            val front = lensFacing == CameraSelector.LENS_FACING_FRONT
-            val pick = if (lowLight || front) at30.minByOrNull { it.lower }
-            else at30.firstOrNull { it.lower == 30 } ?: at30.maxByOrNull { it.lower }
+            // La cámara decide: con luz va a 30 fps; de noche baja un poco para recoger más luz.
+            // (Fijarla en 30 hacía que todo saliera oscuro de noche.)
+            val pick = at30.minByOrNull { it.lower }
             val opts = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
             pick?.let { opts.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
-            if (front) {
-                // Selfies: la cámara mide la luz sobre la cara (si el cel lo soporta)
+            if (mode != Mode.MOON && mode != Mode.SUNSET) {
+                // La cámara mide la luz sobre las caras (si el cel lo soporta)
                 val scenes = chars.getCameraCharacteristic(
                     android.hardware.camera2.CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
                 if (scenes?.contains(android.hardware.camera2.CameraMetadata.CONTROL_SCENE_MODE_FACE_PRIORITY) == true) {
