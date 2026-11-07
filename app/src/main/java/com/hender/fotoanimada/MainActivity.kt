@@ -206,6 +206,7 @@ class MainActivity : ComponentActivity() {
         beautyButton = findViewById(R.id.beautyButton)
         beautyPanel = findViewById(R.id.beautyPanel)
         Beauty.load(this)
+        nightAuto = CameraSettings.get(this, CameraSettings.NIGHT_AUTO, "on") == "on"
         buildBeautyPanel()
         beautyButton.setOnClickListener {
             val show = beautyPanel.visibility != View.VISIBLE
@@ -1086,6 +1087,10 @@ class MainActivity : ComponentActivity() {
             Seg("mirror", "Como te ves", "Igual que en la pantalla, como en un espejo"),
             Seg("true", "Como te ven", "Volteada: así te ven los demás"),
         ), def = "mirror")
+        section("Modo noche", CameraSettings.NIGHT_AUTO, listOf(
+            Seg("on", "Automático", "De noche junta varias fotos y sube el brillo (sale la lunita)"),
+            Seg("off", "Apagado", "Una sola foto, sin subir el brillo de más"),
+        ), def = "on")
         section("Belleza", CameraSettings.BEAUTY, listOf(
             Seg("off", "Apagada", "Piel natural: sin alisar ni retocar la cara"),
             Seg("on", "Encendida", "Usa tus ajustes de belleza (en Efectos) y alisa un poco la piel"),
@@ -1141,6 +1146,8 @@ class MainActivity : ComponentActivity() {
         }
         dialog.setOnDismissListener {
             Beauty.load(this)
+            val na = CameraSettings.get(this, CameraSettings.NIGHT_AUTO, "on") == "on"
+            if (na != nightAuto) setNightAuto(na, announce = false)
             updateBeautyIcon()
             engine.refresh()
             if (beautyPanel.visibility == View.VISIBLE) buildBeautyPanel()
@@ -1325,7 +1332,7 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
         val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
-        val night = nightNow() && gainModes()
+        val night = nightHelp() && gainModes()
         val tone = if (fx == null && photoLike && (Enhance.enabled(this) || night)) {
             val g = if (night) digitalGain else 1f
             InstantFx.tonePreview(
@@ -1665,8 +1672,8 @@ class MainActivity : ComponentActivity() {
     private fun gainModes() = mode == Mode.PHOTO || mode == Mode.PORTRAIT ||
         (mode == Mode.INSTANT && !instantLook.fx) || (mode == Mode.NIGHT && Enhance.enabled(this))
 
-    /** De noche de verdad: la cámara ya expone todo lo que puede (o es el modo Noche). */
-    private fun nightNow() = lowLight || mode == Mode.NIGHT
+    /** Si la ayuda de noche está activa: brillo digital y varias fotos juntas (o el modo Noche). */
+    private fun nightHelp() = (lowLight && nightAuto) || mode == Mode.NIGHT
 
     /** La imagen real de la vista previa, chiquitica (sin filtros ni brillo digital). */
     private fun sample(w: Int, h: Int): IntArray? {
@@ -1780,6 +1787,17 @@ class MainActivity : ComponentActivity() {
     private var darkTicks = 0
     private var nightBadge: TextView? = null
 
+    /** Modo noche automático (se prende y apaga tocando la lunita o en Ajustes). */
+    private var nightAuto = true
+
+    private fun setNightAuto(on: Boolean, announce: Boolean = true) {
+        nightAuto = on
+        CameraSettings.set(this, CameraSettings.NIGHT_AUTO, if (on) "on" else "off")
+        if (on) refreshGainNow() else setDigitalGain(1f)
+        applyTone()
+        if (announce) showToast(if (on) "Modo noche activado" else "Modo noche apagado")
+    }
+
     /**
      * Por si la cámara no avisa bien (la frontal a veces se queda corta de ISO o de tiempo):
      * imagen muy oscura con la cámara ya exponiendo largo = es de noche.
@@ -1802,7 +1820,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateDigitalGain(key: Float, userEv: Float, immediate: Boolean) {
-        val target = if (nightNow()) Brightness.gain(key, Brightness.aim(userEv), Brightness.maxGain(userEv)) else 1f
+        val target = if (nightHelp()) Brightness.gain(key, Brightness.aim(userEv), Brightness.maxGain(userEv)) else 1f
         setDigitalGain(if (immediate) target else digitalGain + (target - digitalGain) * 0.5f)
     }
 
@@ -1819,7 +1837,7 @@ class MainActivity : ComponentActivity() {
 
     /** El usuario movió el brillo: la vista previa responde ya, sin esperar el siguiente vistazo. */
     private fun refreshGainNow() {
-        if (!gainModes() || !nightNow() || busy || frozen) return
+        if (!gainModes() || !nightHelp() || busy || frozen) return
         val px = sample(48, 64) ?: return
         updateDigitalGain(Brightness.key(px, 48, 64), evBias * evStepSize(), immediate = true)
     }
@@ -1845,7 +1863,10 @@ class MainActivity : ComponentActivity() {
                 }
                 alpha = 0f
                 visibility = View.GONE
-                setOnClickListener { showDial() }
+                setOnClickListener {
+                    it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    setNightAuto(!nightAuto)
+                }
                 holder.addView(this, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     gravity = android.view.Gravity.TOP or android.view.Gravity.START
@@ -1855,6 +1876,12 @@ class MainActivity : ComponentActivity() {
                 nightBadge = this
             }
         }
+        // Prendido: luna y letras amarillas. Apagado: en blanco y tachado (como el iPhone)
+        val color = if (nightAuto) 0xFFFFD60A.toInt() else 0xB3FFFFFF.toInt()
+        badge.setTextColor(color)
+        badge.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(color)
+        badge.paintFlags = if (nightAuto) badge.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+        else badge.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
         if (show && badge.visibility != View.VISIBLE) {
             badge.visibility = View.VISIBLE
             badge.animate().cancel()
@@ -2738,10 +2765,11 @@ class MainActivity : ComponentActivity() {
         val front = lensFacing == CameraSelector.LENS_FACING_FRONT
         if (mode == Mode.PORTRAIT || mode == Mode.NIGHT || mode == Mode.NIGHT_VISION) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
-        val dark = lowLight
+        // Con el modo noche apagado la foto se trata como una normal (sin subirla de más)
+        val dark = lowLight && nightAuto
         // De noche la foto se sube igual que la vista previa (con el brillo que eligió el usuario)
         val userEv = evBias * evStepSize()
-        val aim = if (lowLight || currentMode == Mode.NIGHT) Brightness.aim(userEv) else 0f
+        val aim = if (dark || currentMode == Mode.NIGHT) Brightness.aim(userEv) else 0f
         val maxG = Brightness.maxGain(userEv)
         // Noche: unas fotos más, iguales, para juntarlas (menos grano, como el iPhone)
         val burst = nightBurstCount(currentMode, screenLit)
@@ -2869,7 +2897,7 @@ class MainActivity : ComponentActivity() {
         if (CameraSettings.get(this, CameraSettings.PHOTO, "12") == "max") return 0
         return when {
             m == Mode.NIGHT -> 4
-            m == Mode.PHOTO && lowLight -> 3
+            m == Mode.PHOTO && lowLight && nightAuto -> 3
             else -> 0
         }
     }

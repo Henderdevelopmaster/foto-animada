@@ -52,6 +52,9 @@ object CameraSettings {
     /** Belleza: "off" = piel natural y sin retoques (por defecto), "on" = usa los ajustes de belleza. */
     const val BEAUTY = "beauty"
 
+    /** Modo noche automático (lunita): "on" = junta varias fotos y sube el brillo de noche. */
+    const val NIGHT_AUTO = "night_auto"
+
     /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
     val formats = listOf("4:3", "16:9", "1:1", "full")
     fun format(c: Context) = get(c, FORMAT, "4:3").let { if (it in formats) it else "4:3" }
