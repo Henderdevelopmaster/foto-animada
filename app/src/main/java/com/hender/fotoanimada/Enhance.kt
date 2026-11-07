@@ -67,6 +67,7 @@ object Enhance {
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         val rep = EnhanceCore.process(px, w, h, EnhanceCore.Options(
             night = night, sunset = sunset, faces = faces, threads = threads, aim = aim, maxGain = maxGain,
+            naturalSkin = !Beauty.enabled,
         ))
         Log.d(TAG, "${w}x$h $rep")
         val out = if (bmp.isMutable) bmp else bmp.copy(Bitmap.Config.ARGB_8888, true)

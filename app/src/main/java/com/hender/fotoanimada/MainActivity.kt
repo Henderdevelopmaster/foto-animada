@@ -618,6 +618,13 @@ class MainActivity : ComponentActivity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val rows = mutableListOf<Pair<android.widget.SeekBar, TextView>>()
+        val lines = mutableListOf<View>()
+        fun paintEnabled() {
+            for (l in lines) {
+                l.alpha = if (Beauty.enabled) 1f else 0.35f
+                for (i in 0 until (l as ViewGroup).childCount) l.getChildAt(i).isEnabled = Beauty.enabled
+            }
+        }
         header.addView(TextView(this).apply {
             text = "Restablecer"
             textSize = 13f
@@ -629,6 +636,21 @@ class MainActivity : ComponentActivity() {
                 rows.forEach { (sb, v) -> sb.progress = 0; v.text = "0" }
                 updateBeautyIcon(); engine.refresh()
                 tap(it)
+            }
+        })
+        // Encender / apagar toda la belleza sin perder cómo estaban los ajustes
+        header.addView(android.widget.Switch(this).apply {
+            isChecked = Beauty.enabled
+            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+            thumbTintList = android.content.res.ColorStateList(states, intArrayOf(0xFFFFFFFF.toInt(), 0xFFD0D0D0.toInt()))
+            trackTintList = android.content.res.ColorStateList(states, intArrayOf(0xFF00E676.toInt(), 0x55FFFFFF))
+            setPadding(dp(10), 0, 0, 0)
+            setOnCheckedChangeListener { v, on ->
+                Beauty.setEnabled(this@MainActivity, on)
+                paintEnabled()
+                updateBeautyIcon()
+                engine.refresh()
+                tap(v)
             }
         })
         beautyPanel.addView(header)
@@ -672,11 +694,13 @@ class MainActivity : ComponentActivity() {
             line.addView(value, LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT))
             beautyPanel.addView(line)
             rows += bar to value
+            lines += line
         }
         row("Suavizar piel", { Beauty.smooth }, { Beauty.smooth = it })
         row("Iluminar", { Beauty.bright }, { Beauty.bright = it })
         row("Afinar cara", { Beauty.slim }, { Beauty.slim = it })
         row("Agrandar ojos", { Beauty.eyes }, { Beauty.eyes = it })
+        paintEnabled()
     }
 
     // ---------- Efectos tipo TikTok ----------
@@ -992,9 +1016,19 @@ class MainActivity : ComponentActivity() {
             setPadding(0, dp(2), 0, dp(10))
         })
 
+        // Lo de abajo se desliza: con todas las opciones ya no cabe en la pantalla
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(28))
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(body)
+        }
+
         data class Seg(val id: String, val label: String, val note: String)
         fun section(title: String, key: String, segs: List<Seg>, def: String = segs[segs.size / 2].id) {
-            root.addView(TextView(this).apply {
+            body.addView(TextView(this).apply {
                 text = title.uppercase()
                 textSize = 11.5f
                 letterSpacing = 0.06f
@@ -1035,8 +1069,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }, LinearLayout.LayoutParams(0, dp(36), 1f))
             }
-            root.addView(bar, LinearLayout.LayoutParams(-1, -2))
-            root.addView(note)
+            body.addView(bar, LinearLayout.LayoutParams(-1, -2))
+            body.addView(note)
             paint(CameraSettings.get(this, key, def).let { cur ->
                 if (segs.any { it.id == cur }) cur else segs.first().id
             })
@@ -1052,6 +1086,10 @@ class MainActivity : ComponentActivity() {
             Seg("mirror", "Como te ves", "Igual que en la pantalla, como en un espejo"),
             Seg("true", "Como te ven", "Volteada: así te ven los demás"),
         ), def = "mirror")
+        section("Belleza", CameraSettings.BEAUTY, listOf(
+            Seg("off", "Apagada", "Piel natural: sin alisar ni retocar la cara"),
+            Seg("on", "Encendida", "Usa tus ajustes de belleza (en Efectos) y alisa un poco la piel"),
+        ), def = "off")
         section("Sonido de la cámara", CameraSettings.SOUND, listOf(
             Seg("on", "Con sonido", "Clic al tomar la foto y pitido al grabar"),
             Seg("off", "En silencio", "Sin ningún sonido"),
@@ -1075,7 +1113,7 @@ class MainActivity : ComponentActivity() {
             Seg("960", "Alta", "1280 × 960 · puede ir más lento"),
         ), def = "720")
 
-        root.addView(TextView(this).apply {
+        body.addView(TextView(this).apply {
             text = "Listo"
             textSize = 16f
             gravity = android.view.Gravity.CENTER
@@ -1084,6 +1122,13 @@ class MainActivity : ComponentActivity() {
             setBackgroundResource(R.drawable.bg_live_pill)
             setOnClickListener { dialog.dismiss() }
         }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(24) })
+        // Alto máximo: como una hoja que sube desde abajo, no toda la pantalla
+        val maxBody = (resources.displayMetrics.heightPixels * 0.62f).toInt()
+        body.measure(
+            View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.widthPixels - dp(40), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        root.addView(scroll, LinearLayout.LayoutParams(-1, if (body.measuredHeight > maxBody) maxBody else -2))
 
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         dialog.setContentView(root)
@@ -1095,6 +1140,10 @@ class MainActivity : ComponentActivity() {
             setDimAmount(0.45f)
         }
         dialog.setOnDismissListener {
+            Beauty.load(this)
+            updateBeautyIcon()
+            engine.refresh()
+            if (beautyPanel.visibility == View.VISIBLE) buildBeautyPanel()
             if (changed) {
                 updateResLabel()
                 bindCamera()
@@ -2694,6 +2743,9 @@ class MainActivity : ComponentActivity() {
         val userEv = evBias * evStepSize()
         val aim = if (lowLight || currentMode == Mode.NIGHT) Brightness.aim(userEv) else 0f
         val maxG = Brightness.maxGain(userEv)
+        // Noche: unas fotos más, iguales, para juntarlas (menos grano, como el iPhone)
+        val burst = nightBurstCount(currentMode, screenLit)
+        if (burst > 0 && currentMode == Mode.PHOTO) showToast("Quieto…")
         if (live) {
             livePill.visibility = View.VISIBLE
             livePill.alpha = 1f
@@ -2702,6 +2754,7 @@ class MainActivity : ComponentActivity() {
         val lock = Any()
         var photo: ByteArray? = null
         var clip: MotionRecorder.Clip? = null
+        var extras: List<ByteArray> = emptyList()
         var remaining = if (live) 2 else 1
 
         fun finishOne() {
@@ -2710,6 +2763,7 @@ class MainActivity : ComponentActivity() {
                 if (remaining > 0) return
             }
             val (p, c) = synchronized(lock) { photo to clip }
+            val ex = synchronized(lock) { extras }
             // La cámara queda libre ya; el procesado sigue por detrás
             runOnUiThread {
                 busy = false
@@ -2732,11 +2786,12 @@ class MainActivity : ComponentActivity() {
                         Processing.encode(nv, 94).also { nv.recycle() }
                     }
                     Mode.NIGHT -> saveProcessed(p, "_NOCHE") {
+                        val base = mergeNight(it, ex)
                         if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(
-                            Enhance.jpeg(this, it, night = true, aim = aim, maxGain = maxG), currentFilter)
-                        else Processing.night(it, currentFilter)
+                            Enhance.jpeg(this, base, night = true, aim = aim, maxGain = maxG), currentFilter)
+                        else Processing.night(base, currentFilter)
                     }
-                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG)
+                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG, ex)
                 }
             }
         }
@@ -2765,7 +2820,14 @@ class MainActivity : ComponentActivity() {
                     val bytes = photoFile.readBytes()
                     photoFile.delete()
                     synchronized(lock) { photo = bytes }
-                    finishOne()
+                    if (burst > 0) {
+                        main.post {
+                            grabBurst(burst) { list ->
+                                synchronized(lock) { extras = list }
+                                finishOne()
+                            }
+                        }
+                    } else finishOne()
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -2798,9 +2860,85 @@ class MainActivity : ComponentActivity() {
             })
     }
 
+    /** Cuántas fotos extra tomar de noche para juntarlas (0 = una sola, como siempre). */
+    private fun nightBurstCount(m: Mode, screenLit: Boolean): Int {
+        // Con flash la escena ya tiene luz (y dispararlo varias veces sería feo)
+        if (screenLit) return 0
+        if (!front && (flashMode == "on" || (flashMode == "auto" && lowLight))) return 0
+        // A 200 MP no cabe en memoria ni vale la pena la espera
+        if (CameraSettings.get(this, CameraSettings.PHOTO, "12") == "max") return 0
+        return when {
+            m == Mode.NIGHT -> 4
+            m == Mode.PHOTO && lowLight -> 3
+            else -> 0
+        }
+    }
+
+    /** Fotos extra, una tras otra, con la misma exposición. */
+    private fun grabBurst(count: Int, done: (List<ByteArray>) -> Unit) {
+        val shots = ArrayList<ByteArray>()
+        fun next() {
+            if (shots.size >= count) {
+                done(shots)
+                return
+            }
+            grab { b ->
+                runOnUiThread {
+                    if (b == null) done(shots) else {
+                        shots += b
+                        next()
+                    }
+                }
+            }
+        }
+        next()
+    }
+
+    /**
+     * Junta la foto con las extras (alineadas y promediadas, sin fantasmas). Si algo falla
+     * o no hay extras, devuelve la foto tal cual.
+     */
+    private fun mergeNight(photo: ByteArray, extras: List<ByteArray>): ByteArray {
+        if (extras.isEmpty()) return photo
+        return try {
+            val t0 = System.currentTimeMillis()
+            // Con poca memoria se junta un poco más pequeña (igual queda mejor que con grano)
+            val maxSide = if (Runtime.getRuntime().maxMemory() >= 400L * 1024 * 1024) 8192 else 3000
+            val refBmp = Processing.decode(photo, maxSide)
+            val w = refBmp.width
+            val h = refBmp.height
+            if (w.toLong() * h > 17_000_000L) {
+                refBmp.recycle()
+                return photo
+            }
+            val ref = IntArray(w * h)
+            refBmp.getPixels(ref, 0, w, 0, 0, w, h)
+            refBmp.recycle()
+            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+            val out = run {
+                val st = NightStack(ref, w, h, threads)
+                for (b in extras) {
+                    val bmp = Processing.decode(b, maxSide)
+                    if (bmp.width == w && bmp.height == h) {
+                        st.add { y, row -> bmp.getPixels(row, 0, w, 0, y, w, 1) }
+                    }
+                    bmp.recycle()
+                }
+                Log.d(TAG, "Noche: ${extras.size + 1} fotos, usado ${st.used}, ${System.currentTimeMillis() - t0} ms")
+                st.result()
+            }
+            val res = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            res.setPixels(out, 0, w, 0, 0, w, h)
+            Processing.encode(res, 97).also { res.recycle() }
+        } catch (e: Throwable) {
+            Log.e(TAG, "No se pudieron juntar las fotos de noche", e)
+            photo
+        }
+    }
+
     private fun saveResult(
         photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false,
-        aim: Float = 0f, maxG: Float = 1f,
+        aim: Float = 0f, maxG: Float = 1f, extras: List<ByteArray> = emptyList(),
     ) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
@@ -2814,8 +2952,9 @@ class MainActivity : ComponentActivity() {
             val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
             finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
             // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
-            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark) {
-                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, photo, night = dark, aim = aim, maxGain = maxG), f)
+            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty()) {
+                val base = mergeNight(photo, extras)
+                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG), f)
                 val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
                 MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
                 refreshThumbnail()

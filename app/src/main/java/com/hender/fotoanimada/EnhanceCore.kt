@@ -35,6 +35,8 @@ object EnhanceCore {
          */
         val aim: Float = 0f,
         val maxGain: Float = 1f,
+        /** Belleza apagada: la piel de las caras conserva su textura (no se alisa). */
+        val naturalSkin: Boolean = false,
     )
 
     class Report(
@@ -221,7 +223,7 @@ object EnhanceCore {
             if (cnt == 0) continue
             val fb = acc / cnt
             val rel = fb - pivot
-            val after = fb + exposure + (if (nightAim && rel < 0f) 0f else rel * (compress - 1f))
+            val after = fb + exposure + squeeze(rel, compress, nightAim)
             val gap = (bm + exposure) - after
             val boost = ((gap - 0.25f) * 0.65f).coerceIn(0f, 0.8f) * min(k, 1f)
             if (boost <= 0.01f) continue
@@ -296,6 +298,7 @@ object EnhanceCore {
                 val sA = Sampler(gfA, sw, sh, f.toFloat(), w)
                 val sB = Sampler(gfB, sw, sh, f.toFloat(), w)
                 val sF = Sampler(faceMap, sw, sh, f.toFloat(), w)
+                val sP = if (o.naturalSkin && o.faces.isNotEmpty()) Sampler(faceGuard, sw, sh, f.toFloat(), w) else null
                 val sGr = gl?.let { Sampler(it[0], sw, sh, f.toFloat(), w) }
                 val sGg = gl?.let { Sampler(it[1], sw, sh, f.toFloat(), w) }
                 val sGb = gl?.let { Sampler(it[2], sw, sh, f.toFloat(), w) }
@@ -303,7 +306,7 @@ object EnhanceCore {
                 val sCb = Sampler(qcb, q.w, q.h, 4f, w)
                 val sCr = Sampler(qcr, q.w, q.h, 4f, w)
                 for (y in y0 until y1) {
-                    sA.row(y); sB.row(y); sF.row(y); sH.row(y); sCb.row(y); sCr.row(y)
+                    sA.row(y); sB.row(y); sF.row(y); sH.row(y); sCb.row(y); sCr.row(y); sP?.row(y)
                     sGr?.row(y); sGg?.row(y); sGb?.row(y)
                     var i = y * w
                     for (x in 0 until w) {
@@ -332,7 +335,9 @@ object EnhanceCore {
                         var crv = r - yy
                         val d = y0l - sH.at(x)
                         val ad = abs(d)
-                        val gain = keep + (1f + sharpen - keep) * smooth(0.5f * t, 1.6f * t, ad)
+                        // En la cara, con la belleza apagada, casi no se alisa (poros y textura reales)
+                        val kp = if (sP != null) keep + (0.85f - keep) * sP.at(x) else keep
+                        val gain = kp + (1f + sharpen - kp) * smooth(0.5f * t, 1.6f * t, ad)
                         yy += d * (gain - 1f)
                         cbv += chromaMix * (sCb.at(x) - (b0 - y0l))
                         crv += chromaMix * (sCr.at(x) - (r0 - y0l))
@@ -342,7 +347,7 @@ object EnhanceCore {
                         // Rango comprimido alrededor de lo importante; de noche solo se bajan las
                         // luces (las sombras negras no se suben: sería subir puro grano)
                         val rel = bse - pivot
-                        var off = exposure + (if (nightAim && rel < 0f) 0f else rel * (compress - 1f)) + sF.at(x)
+                        var off = exposure + squeeze(rel, compress, nightAim) + sF.at(x)
                         // Lo que ya está claro no se sube (ni en la cara): así no se quema
                         if (off > 0f) off *= 1f - smooth(hiLo, hiHi, bse)
                         val ratio = fastExp2(off)
@@ -382,13 +387,29 @@ object EnhanceCore {
 
     // ---------------------------------------------------------------- utilidades
 
+    /**
+     * Altas luces suaves pero con blancos de verdad: hasta 0.94 queda igual y de ahí se dobla
+     * para llegar a blanco puro en 1.06 (antes el blanco quedaba gris: máximo 240 de 255).
+     */
     private fun out8(v: Float): Int {
         var x = v
-        if (x > 0.88f) {
-            val tt = (x - 0.88f) / 0.12f
-            x = 0.88f + 0.12f * tt / (1f + tt)
+        if (x > 0.94f) {
+            val t = ((x - 0.94f) / 0.12f).coerceAtMost(1f)
+            x = 0.94f + 0.12f * t - 0.06f * t * t
         }
         return (x * 255f + 0.5f).toInt().coerceIn(0, 255)
+    }
+
+    /**
+     * Rango comprimido alrededor de lo importante ([rel] = cuántos pasos sobre o bajo eso).
+     * De día se suben las sombras y lo claro casi no se toca (si se baja, el blanco queda gris
+     * y la foto se ve apagada). De noche al revés: solo se bajan las luces y las sombras negras
+     * no se suben (sería subir puro grano).
+     */
+    private fun squeeze(rel: Float, compress: Float, night: Boolean): Float = when {
+        night -> if (rel < 0f) 0f else rel * (compress - 1f)
+        rel < 0f -> rel * (compress - 1f)
+        else -> rel * (compress - 1f) * 0.25f
     }
 
     /**

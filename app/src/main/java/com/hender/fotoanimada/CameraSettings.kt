@@ -49,6 +49,9 @@ object CameraSettings {
     /** Selfies: "mirror" = como te ves en la pantalla (espejo), "true" = sin voltear (como te ven). */
     const val MIRROR = "mirror"
 
+    /** Belleza: "off" = piel natural y sin retoques (por defecto), "on" = usa los ajustes de belleza. */
+    const val BEAUTY = "beauty"
+
     /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
     val formats = listOf("4:3", "16:9", "1:1", "full")
     fun format(c: Context) = get(c, FORMAT, "4:3").let { if (it in formats) it else "4:3" }

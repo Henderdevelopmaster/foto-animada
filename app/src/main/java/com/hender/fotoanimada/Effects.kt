@@ -377,7 +377,7 @@ class EffectRenderer(private val context: Context) {
         }
         paint.colorFilter = null
 
-        if (Beauty.smooth > 0.01f && faces.isNotEmpty()) drawSmooth(canvas, frame, faces, sx, sy)
+        if (Beauty.smoothFx > 0.01f && faces.isNotEmpty()) drawSmooth(canvas, frame, faces, sx, sy)
 
         if (effect.glitch) drawGlitch(canvas, frame, nowMs, sx, sy)
         if (effect.scanlines) drawScanlines(canvas, outW, outH)
@@ -567,18 +567,19 @@ class EffectRenderer(private val context: Context) {
 
     private fun colorFilter(effect: FaceEffect, nowMs: Long): ColorMatrixColorFilter? {
         val m = effect.matrix() ?: ColorMatrix()
-        if (Beauty.bright > 0.01f) {
+        val bright = Beauty.brightFx
+        if (bright > 0.01f) {
             // Iluminar: sube sombras y da un tono cálido suave
-            val t = Beauty.bright * 34f
+            val t = bright * 34f
             val k = 1f - t / 255f
             m.postConcat(ColorMatrix(floatArrayOf(
-                k * 1.02f, 0f, 0f, 0f, t + 4f * Beauty.bright,
+                k * 1.02f, 0f, 0f, 0f, t + 4f * bright,
                 0f, k, 0f, 0f, t,
-                0f, 0f, k * 0.98f, 0f, t - 2f * Beauty.bright,
+                0f, 0f, k * 0.98f, 0f, t - 2f * bright,
                 0f, 0f, 0f, 1f, 0f,
             )))
         }
-        if (effect.matrix() == null && !effect.glitch && Beauty.bright <= 0.01f) return null
+        if (effect.matrix() == null && !effect.glitch && bright <= 0.01f) return null
         if (effect.glitch) {
             // Ligero parpadeo de contraste
             val k = 1f + 0.08f * sin(nowMs / 90.0).toFloat()
@@ -644,7 +645,7 @@ class EffectRenderer(private val context: Context) {
         val outW = frame.width * sx
         val outH = frame.height * sy
         val layer = canvas.saveLayer(0f, 0f, outW, outH, null)
-        smoothPaint.alpha = (Beauty.smooth * 215).toInt()
+        smoothPaint.alpha = (Beauty.smoothFx * 215).toInt()
         canvas.drawBitmap(sm, null, android.graphics.RectF(0f, 0f, outW, outH), smoothPaint)
         smoothPaint.alpha = 255
         // Máscara: óvalo de la cara (suave en el borde)
@@ -708,8 +709,8 @@ class EffectRenderer(private val context: Context) {
             for (c in 0..cols) {
                 var x = fw * c / cols
                 var y = fh * r / rows
-                val eyesK = (if (effect.warp == "bigEyes") effect.warpStrength else 0f) + Beauty.eyes * 0.28f
-                val slimK = (if (effect.warp == "slim") effect.warpStrength else 0f) + Beauty.slim * 0.55f
+                val eyesK = (if (effect.warp == "bigEyes") effect.warpStrength else 0f) + Beauty.eyesFx * 0.28f
+                val slimK = (if (effect.warp == "slim") effect.warpStrength else 0f) + Beauty.slimFx * 0.55f
                 for (f in faces) {
                     if (eyesK > 0f) {
                         for (eye in listOf(f.leftEye, f.rightEye)) {

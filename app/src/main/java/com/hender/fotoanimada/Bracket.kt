@@ -263,6 +263,9 @@ object Bracket {
         return dx to dy
     }
 
+    /** Igual que [shiftOf], sobre mapas de luz ya hechos (para no copiar fotos enteras). */
+    fun alignLuma(a: ByteArray, b: ByteArray, w: Int, h: Int): Pair<Int, Int> = align(a, b, w, h)
+
     /** Desplazamiento entre dos fotos ya con la misma exposición (para apilar). */
     fun shiftOf(a: IntArray, b: IntArray, w: Int, h: Int): Pair<Int, Int> =
         align(luma(a, w, h), luma(b, w, h), w, h)
