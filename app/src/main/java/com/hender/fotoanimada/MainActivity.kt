@@ -2073,7 +2073,7 @@ class MainActivity : ComponentActivity() {
         playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         recTimer.visibility = View.GONE
         shutter.setBackgroundResource(R.drawable.shutter)
-        showToast("Guardando video…")
+        processingStart("Guardando video…")
         recorder.stopLong { clip ->
             ioExecutor.execute {
                 var msg: String? = null
@@ -2118,11 +2118,14 @@ class MainActivity : ComponentActivity() {
         if (!bursting) return
         val f = filter
         val file = File(cacheDir, "burst.jpg")
-        playSound(MediaActionSound.SHUTTER_CLICK)
         ic.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).setMetadata(selfieMeta()).build(),
             ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
+                override fun onCaptureStarted() {
+                    playSound(MediaActionSound.SHUTTER_CLICK)
+                }
+
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val bytes = file.readBytes()
                     burstCount++
@@ -2436,11 +2439,8 @@ class MainActivity : ComponentActivity() {
         }
         busy = true
         filterBar.visibility = View.GONE
-        playSound(MediaActionSound.SHUTTER_CLICK)
         shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        flash.alpha = 0.85f
-        flash.animate().alpha(0f).setDuration(220).start()
-        showToast("Quieto… 3 fotos")
+        holdStart(3)
         val order = listOf(lo, 0, hi)
         val shots = ArrayList<ByteArray>()
         val currentFilter = filter
@@ -2448,7 +2448,7 @@ class MainActivity : ComponentActivity() {
             if (i == order.size) {
                 applyExposure()
                 busy = false
-                showToast("Juntando las 3 fotos…")
+                holdEnd(processing = true, note = "Juntando las 3 fotos…")
                 saveExecutor.execute { saveSunset(shots, currentFilter) }
                 return
             }
@@ -2460,7 +2460,7 @@ class MainActivity : ComponentActivity() {
             val take = Runnable {
                 // Un respiro para que la cámara se acomode a la nueva exposición
                 main.postDelayed({
-                    grab { b ->
+                    grab(onStarted = { shotTaken(sound = i == 0) }) { b ->
                         runOnUiThread {
                             if (b != null) shots += b
                             next(i + 1)
@@ -2520,17 +2520,17 @@ class MainActivity : ComponentActivity() {
     private fun captureMoon() {
         if (busy || imageCapture == null) return
         busy = true
-        showToast("Quieto… tomando 6 fotos")
+        shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        holdStart(6)
         val shots = ArrayList<ByteArray>()
         fun next(i: Int) {
             if (i == 6) {
                 busy = false
-                showToast("Juntando las fotos de la luna…")
+                holdEnd(processing = true, note = "Juntando las fotos de la luna…")
                 saveExecutor.execute { saveMoon(shots) }
                 return
             }
-            playSound(MediaActionSound.SHUTTER_CLICK)
-            grab { b ->
+            grab(onStarted = { shotTaken(sound = i == 0) }) { b ->
                 runOnUiThread {
                     if (b != null) shots += b
                     main.postDelayed({ next(i + 1) }, 120)
@@ -2570,8 +2570,11 @@ class MainActivity : ComponentActivity() {
             .build()
         val previewB = Preview.Builder().setResolutionSelector(ratio43)
         if (!night) watchExposure(previewB)
+        // Sin "máxima calidad": ese modo vuelve a enfocar ANTES de tomar (hasta 1 s de
+        // espera, por eso la foto salía después del toque). El enfoque continuo ya está listo.
         val captureB = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setJpegQuality(98)
             .setResolutionSelector(CameraSettings.photoSelector(this, wide))
         if (night) {
             // Noche: dejar que la cámara use exposiciones más largas y reducción de ruido fuerte
@@ -2733,6 +2736,137 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    // ---------- Aviso de captura: se marca cuando la foto de verdad se toma ----------
+
+    private var holdPill: TextView? = null
+    private var holdTotal = 0
+    private var holdDone = 0
+    private var spinRing: SpinRing? = null
+    private var pendingSaves = 0
+    private val holdShow = Runnable { showHoldPill() }
+    private val spinSafety = Runnable {
+        pendingSaves = 0
+        spinRing?.spin(false)
+    }
+
+    /**
+     * Al tocar el obturador: el botón se hunde hasta que la foto se toma de verdad. Si la cámara
+     * tarda un instante (o son varias fotos), aparece "Quieto…" para no mover el cel antes de tiempo.
+     */
+    private fun holdStart(total: Int) {
+        holdTotal = total
+        holdDone = 0
+        shutter.animate().cancel()
+        shutter.animate().scaleX(0.86f).scaleY(0.86f).setDuration(110).start()
+        main.removeCallbacks(holdShow)
+        main.postDelayed(holdShow, if (total > 1) 0L else 250L)
+    }
+
+    /** La cámara empezó a tomar la foto: aquí (y no al tocar) van el parpadeo y el clic. */
+    private fun shotTaken(sound: Boolean) {
+        if (holdDone == 0) blink(sound)
+        holdDone++
+        holdPill?.let { if (it.visibility == View.VISIBLE) it.text = holdText() }
+    }
+
+    /** Parpadeo negro de la vista previa + clic: el instante exacto de la foto. */
+    private fun blink(sound: Boolean) {
+        if (sound) playSound(MediaActionSound.SHUTTER_CLICK)
+        flash.animate().cancel()
+        flash.alpha = 0.85f
+        flash.animate().alpha(0f).setDuration(220).start()
+    }
+
+    /** Ya se tomó todo: el botón vuelve y, si falta procesar, gira el aro de la miniatura. */
+    private fun holdEnd(processing: Boolean, note: String? = null) {
+        main.removeCallbacks(holdShow)
+        shutter.animate().cancel()
+        shutter.animate().scaleX(1f).scaleY(1f).setDuration(160).start()
+        val pill = holdPill
+        if (pill != null && pill.visibility == View.VISIBLE) {
+            val multi = holdTotal > 1
+            if (multi) {
+                pill.text = "Listo, ya puedes moverte"
+                shutter.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            }
+            pill.animate().cancel()
+            pill.animate().alpha(0f).setStartDelay(if (multi) 650L else 0L).setDuration(200)
+                .withEndAction { pill.visibility = View.GONE; pill.animate().startDelay = 0 }.start()
+        }
+        holdTotal = 0
+        if (processing) processingStart(note)
+    }
+
+    private fun holdText() = if (holdTotal > 1) "Quieto · ${holdDone.coerceAtMost(holdTotal)} de $holdTotal" else "Quieto…"
+
+    private fun showHoldPill() {
+        if (holdTotal == 0) return
+        val pill = holdPill ?: run {
+            if (!::evButton.isInitialized) return
+            val holder = evButton.parent as? FrameLayout ?: return
+            TextView(this).apply {
+                textSize = 13f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(0xFFFFFFFF.toInt())
+                gravity = android.view.Gravity.CENTER
+                setPadding(dp(16), dp(7), dp(16), dp(7))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(17).toFloat()
+                    setColor(0xA6000000.toInt())
+                }
+                visibility = View.GONE
+                holder.addView(this, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+                    topMargin = dp(52)
+                })
+                holdPill = this
+            }
+        }
+        pill.text = holdText()
+        pill.animate().cancel()
+        pill.animate().startDelay = 0
+        pill.visibility = View.VISIBLE
+        pill.alpha = 0f
+        pill.scaleX = 0.92f
+        pill.scaleY = 0.92f
+        pill.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+    }
+
+    /** La foto ya está tomada pero se sigue procesando: aro girando en la miniatura (y aviso si tarda). */
+    private fun processingStart(note: String? = null) {
+        pendingSaves++
+        val ring = spinRing ?: run {
+            val holder = thumbnail.parent as? FrameLayout ?: return@run null
+            SpinRing(this).also { r ->
+                holder.addView(r, FrameLayout.LayoutParams(dp(60), dp(60)).apply {
+                    gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                    marginStart = -dp(5)
+                })
+                spinRing = r
+            }
+        }
+        ring?.spin(true)
+        note?.let { showToast(it) }
+        main.removeCallbacks(spinSafety)
+        main.postDelayed(spinSafety, 30_000)
+    }
+
+    private fun processingEnd() {
+        pendingSaves = (pendingSaves - 1).coerceAtLeast(0)
+        if (pendingSaves == 0) {
+            main.removeCallbacks(spinSafety)
+            spinRing?.spin(false)
+        }
+    }
+
+    /** Aviso para los modos que tardan en procesar. */
+    private fun processingNote(m: Mode): String? = when (m) {
+        Mode.PORTRAIT -> "Procesando retrato…"
+        Mode.NIGHT -> "Juntando las fotos de noche…"
+        else -> null
+    }
+
     private fun takeStill() {
         if (busy || imageCapture == null) return
         if (wantsScreenFlash()) {
@@ -2755,15 +2889,12 @@ class MainActivity : ComponentActivity() {
         filterBar.visibility = View.GONE
 
         val live = liveActive
-        // Como en el iPhone: con LIVE no suena el clic (si sonara, quedaría grabado en el audio)
-        if (!live) playSound(MediaActionSound.SHUTTER_CLICK)
+        // El toque se siente ya; el clic y el parpadeo van cuando la cámara de verdad toma
+        // la foto (shotTaken), así se sabe el instante exacto
         shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-        flash.alpha = 0.85f
-        flash.animate().alpha(0f).setDuration(220).start()
 
         val currentMode = mode
         val front = lensFacing == CameraSelector.LENS_FACING_FRONT
-        if (mode == Mode.PORTRAIT || mode == Mode.NIGHT || mode == Mode.NIGHT_VISION) showToast(if (mode == Mode.NIGHT) "Quieto…" else "Procesando retrato…")
         val currentFilter = filter
         // Con el modo noche apagado la foto se trata como una normal (sin subirla de más)
         val dark = lowLight && nightAuto
@@ -2773,7 +2904,7 @@ class MainActivity : ComponentActivity() {
         val maxG = Brightness.maxGain(userEv)
         // Noche: unas fotos más, iguales, para juntarlas (menos grano, como el iPhone)
         val burst = nightBurstCount(currentMode, screenLit)
-        if (burst > 0 && currentMode == Mode.PHOTO) showToast("Quieto…")
+        holdStart(1 + burst)
         if (live) {
             livePill.visibility = View.VISIBLE
             livePill.alpha = 1f
@@ -2840,6 +2971,8 @@ class MainActivity : ComponentActivity() {
                 override fun onCaptureStarted() {
                     // Instante real de la foto: el Live queda centrado aquí
                     if (live) recorder.markShutter(System.nanoTime() / 1000)
+                    // Con LIVE no suena el clic (como en el iPhone: quedaría grabado en el audio)
+                    main.post { shotTaken(sound = !live) }
                     if (screenLit) main.postDelayed({ hideScreenFlash() }, 350)
                 }
 
@@ -2852,15 +2985,21 @@ class MainActivity : ComponentActivity() {
                         main.post {
                             grabBurst(burst) { list ->
                                 synchronized(lock) { extras = list }
+                                // Ya se puede mover: lo que sigue es procesar
+                                holdEnd(processing = true, note = processingNote(currentMode))
                                 finishOne()
                             }
                         }
-                    } else finishOne()
+                    } else {
+                        main.post { holdEnd(processing = true, note = processingNote(currentMode)) }
+                        finishOne()
+                    }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     Log.e(TAG, "Error tomando la foto", exception)
                     if (screenLit) main.post { hideScreenFlash() }
+                    main.post { holdEnd(processing = false) }
                     photoFile.delete()
                     finishOne()
                 }
@@ -2869,11 +3008,15 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Una foto a memoria (para fotomatón). */
-    private fun grab(onDone: (ByteArray?) -> Unit) {
+    private fun grab(onStarted: (() -> Unit)? = null, onDone: (ByteArray?) -> Unit) {
         val ic = imageCapture ?: return onDone(null)
         val f = File(cacheDir, "grab_${System.nanoTime()}.jpg")
         ic.takePicture(ImageCapture.OutputFileOptions.Builder(f).setMetadata(selfieMeta()).build(), ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
+                override fun onCaptureStarted() {
+                    onStarted?.let { cb -> main.post { cb() } }
+                }
+
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val b = f.readBytes()
                     f.delete()
@@ -2910,7 +3053,7 @@ class MainActivity : ComponentActivity() {
                 done(shots)
                 return
             }
-            grab { b ->
+            grab(onStarted = { shotTaken(sound = false) }) { b ->
                 runOnUiThread {
                     if (b == null) done(shots) else {
                         shots += b
@@ -3294,7 +3437,7 @@ class MainActivity : ComponentActivity() {
                     recTimer.visibility = View.GONE
                     recorder.enabled = liveActive
                     busy = false
-                    showToast("Armando el boomerang…")
+                    processingStart("Armando el boomerang…")
                 }
                 saveExecutor.execute { makeBoomerang(clip, boomKind) }
             }
@@ -3360,7 +3503,7 @@ class MainActivity : ComponentActivity() {
         fun next(i: Int) {
             if (i == 4) {
                 busy = false
-                showToast("Armando el fotomatón…")
+                processingStart("Armando el fotomatón…")
                 saveExecutor.execute { saveBooth(shots) }
                 return
             }
@@ -3379,10 +3522,7 @@ class MainActivity : ComponentActivity() {
                         main.postDelayed(this, 650)
                     } else {
                         countdown.text = "${i + 1}/4"
-                        playSound(MediaActionSound.SHUTTER_CLICK)
-                        flash.alpha = 0.85f
-                        flash.animate().alpha(0f).setDuration(220).start()
-                        grab { b ->
+                        grab(onStarted = { blink(sound = true) }) { b ->
                             runOnUiThread {
                                 if (b != null) shots += b
                                 if (i == 3) countdown.visibility = View.GONE
@@ -3579,6 +3719,7 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
             busy = false
             livePill.visibility = View.GONE
+            processingEnd()
             message?.let { showToast(it) }
             if (thumb != null) {
                 thumbnail.setImageBitmap(thumb)
