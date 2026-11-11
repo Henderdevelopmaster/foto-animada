@@ -151,7 +151,7 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
 | Mejora automática apagada | La foto sale tal cual del sensor y encima solo Viva |
 | Ráfaga | Sin Viva (la ráfaga es para rapidez y no lleva mejoras) |
 | Se apaga mientras se procesa | La foto que ya se tomó igual sale con Viva (se decide al disparar) |
-| Fotos viejas | En el visor de la galería, menú (⋯) > **Viva**: guarda una **copia** con Viva; la original no se toca |
+| Fotos viejas | En el visor, menú (⋯) > **Viva**: alterna Original y Viva en una vista previa. Solo **Guardar copia** crea un JPEG quieto |
 | Modo MÁX (200 MP) | Sin Viva ni mejora: la foto gigante se deja con todo su detalle |
 
 ## 6. Flash
@@ -263,7 +263,9 @@ cabe y se cierra tocando fuera o con "Listo".
 11. Viva: tocar los destellos (abajo a la derecha). La vista previa cambia al instante y sale
     "Viva: más nitidez y color". Tomar la misma escena con y sin Viva y compararlas en la galería.
 12. Cerrar y abrir la app: Viva sigue como lo dejaste. Pasar a VIDEO: el botón desaparece.
-13. Galería > una foto > menú > Viva: aparece una copia nueva y la original sigue igual.
+13. Galería > una foto > menú > Viva: alternar Original y Viva en el mismo encuadre. Cancelar
+    y verificar que no se cree un archivo. Reabrir y tocar «Guardar copia». Debe aparecer un
+    JPEG nuevo y el original debe seguir igual. Repetir con un Live y comprobar que aún se mueva.
 14. Ajustes > Rendimiento > Mostrar: tomar 3 fotos y mandar captura del panel (con eso se
     optimiza lo que de verdad está lento en tu cel).
 15. Noche (lunita amarilla), selfie: moverse a propósito durante "Quieto · n de 4". La foto

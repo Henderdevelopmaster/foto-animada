@@ -2,6 +2,7 @@ package com.hender.fotoanimada
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -34,7 +35,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.media3.common.MediaItem
@@ -99,6 +103,7 @@ class ViewerActivity : ComponentActivity() {
     private lateinit var keyPanel: View
     private lateinit var keySeek: SeekBar
     private lateinit var busyText: TextView
+    private var vividSheet: Dialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -822,6 +827,7 @@ class ViewerActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        vividSheet?.dismiss()
         clearEffect()
     }
 
@@ -865,8 +871,8 @@ class ViewerActivity : ComponentActivity() {
         val actions = mutableListOf<Sheet.Item>()
         if (!item.isVideo) {
             actions += Sheet.Item("Viva", R.drawable.ic_vivid,
-                subtitle = if (item.isLive) "Copia quieta con más nitidez y color" else "Guarda una copia con más nitidez y color",
-            ) { runVivid(item) }
+                subtitle = if (item.isLive) "Compara y guarda una copia quieta" else "Compara el resultado antes de guardar",
+            ) { compareVivid(item) }
             actions += Sheet.Item("Texto en vivo", R.drawable.ic_text_scan, subtitle = "Copia el texto de la foto") { runOcr(item) }
             actions += Sheet.Item("Recortar sujeto", R.drawable.ic_cutout, subtitle = "Separa a la persona del fondo") { runSegmentation(item) }
         }
@@ -929,7 +935,109 @@ class ViewerActivity : ComponentActivity() {
         ), primary = 0, scroll = text.length > 300)
     }
 
-    // Recortar sujeto (ML Kit Subject Segmentation)
+    private fun compareVivid(item: MediaRepo.Item) {
+        vividSheet?.dismiss()
+        val original = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Original"
+            setTextColor(android.graphics.Color.WHITE)
+            minimumHeight = dp(48)
+        }
+        val vivid = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "Viva"
+            setTextColor(android.graphics.Color.WHITE)
+            minimumHeight = dp(48)
+        }
+        val variants = RadioGroup(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(original, RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(vivid, RadioGroup.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            check(original.id)
+        }
+        original.isEnabled = false
+        vivid.isEnabled = false
+        val image = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Foto original"
+        }
+        val status = TextView(this).apply {
+            text = "Preparando la comparación…"
+            setTextColor(android.graphics.Color.WHITE)
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        val save = android.widget.Button(this).apply {
+            text = "Guardar copia"
+            isAllCaps = false
+            isEnabled = false
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(status)
+            addView(image, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp((resources.configuration.screenHeightDp / 3).coerceIn(120, 280)),
+            ))
+            addView(variants)
+            addView(save, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val dialog = Sheet.custom(this, "Comparar Viva", content, listOf("Cancelar" to {}), primary = -1)
+        vividSheet = dialog
+        dialog.setOnDismissListener {
+            image.setImageDrawable(null)
+            variants.setOnCheckedChangeListener(null)
+            if (vividSheet === dialog) vividSheet = null
+        }
+        save.setOnClickListener {
+            dialog.dismiss()
+            runVivid(item)
+        }
+
+        io.execute {
+            val previews = try {
+                val before = MediaRepo.loadFull(this, item.uri, 1280, software = true)
+                    ?: throw IllegalStateException("No se pudo abrir la foto")
+                val after = try {
+                    before.copy(Bitmap.Config.ARGB_8888, true)?.also { copy ->
+                        try {
+                            Enhance.bitmap(this, copy, vivid = true, auto = false)
+                        } catch (e: Throwable) {
+                            copy.recycle()
+                            throw e
+                        }
+                    } ?: throw IllegalStateException("No se pudo preparar la foto")
+                } catch (e: Throwable) {
+                    before.recycle()
+                    throw e
+                }
+                before to after
+            } catch (e: Throwable) {
+                android.util.Log.e("Viewer", "Comparar Viva", e)
+                null
+            }
+            runOnUiThread {
+                if (vividSheet !== dialog || !dialog.isShowing) {
+                    previews?.first?.recycle()
+                    previews?.second?.recycle()
+                    return@runOnUiThread
+                }
+                if (previews == null) {
+                    status.text = "No se pudo preparar la comparación"
+                    return@runOnUiThread
+                }
+                status.visibility = View.GONE
+                image.setImageBitmap(previews.first)
+                original.isEnabled = true
+                vivid.isEnabled = true
+                save.isEnabled = true
+                variants.setOnCheckedChangeListener { _, checked ->
+                    val showVivid = checked == vivid.id
+                    image.setImageBitmap(if (showVivid) previews.second else previews.first)
+                    image.contentDescription = if (showVivid) "Foto con Viva" else "Foto original"
+                }
+            }
+        }
+    }
+
     /** Viva sobre una foto ya tomada: guarda una copia nueva y la original queda igual. */
     private fun runVivid(item: MediaRepo.Item) {
         showBusy("Aplicando Viva…")
@@ -937,10 +1045,16 @@ class ViewerActivity : ComponentActivity() {
             val saved = try {
                 val src = MediaRepo.loadFull(this, item.uri, 4096, software = true)
                     ?: throw IllegalStateException("No se pudo abrir la foto")
-                val bmp = if (src.isMutable) src else src.copy(Bitmap.Config.ARGB_8888, true).also { src.recycle() }
-                Enhance.bitmap(this, bmp, vivid = true, auto = false)
-                val bytes = Processing.encode(bmp, 95)
-                bmp.recycle()
+                val bytes = try {
+                    val bmp = Enhance.bitmap(this, src, vivid = true, auto = false)
+                    try {
+                        Processing.encode(bmp, 95)
+                    } finally {
+                        if (bmp !== src) bmp.recycle()
+                    }
+                } finally {
+                    src.recycle()
+                }
                 MotionPhotoWriter.save(this, bytes, null, "_VIVA")
             } catch (e: Throwable) {
                 android.util.Log.e("Viewer", "Viva", e)
@@ -959,6 +1073,7 @@ class ViewerActivity : ComponentActivity() {
         }
     }
 
+    // Recortar sujeto (ML Kit Subject Segmentation)
     private fun runSegmentation(item: MediaRepo.Item) {
         showBusy("Recortando sujeto…")
         io.execute {
