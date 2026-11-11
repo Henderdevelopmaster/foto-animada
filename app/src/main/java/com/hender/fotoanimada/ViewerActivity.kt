@@ -102,6 +102,7 @@ class ViewerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Registro.install(this)
         setContentView(R.layout.activity_viewer)
         pager = findViewById(R.id.pager)
         strip = findViewById(R.id.strip)

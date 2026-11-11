@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Registro.install(this)
         setContentView(R.layout.activity_main)
         previewView = findViewById(R.id.preview)
         shutter = findViewById(R.id.shutter)
@@ -1173,6 +1174,38 @@ class MainActivity : ComponentActivity() {
         ), def = "off", rebind = false)
 
         body.addView(TextView(this).apply {
+            text = "Compartir registro"
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundResource(R.drawable.bg_outline_pill)
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_share_small, 0, 0, 0)
+            compoundDrawablePadding = dp(8)
+            setPadding(dp(18), 0, dp(18), 0)
+            contentDescription = "Compartir el registro de la app para revisar errores"
+            setOnClickListener {
+                isEnabled = false
+                alpha = 0.5f
+                text = "Preparando…"
+                Registro.share(this@MainActivity, settingsSummary()) { ok ->
+                    isEnabled = true
+                    alpha = 1f
+                    text = "Compartir registro"
+                    if (!ok) showToast("No se pudo armar el registro")
+                }
+            }
+        }, LinearLayout.LayoutParams(-2, dp(42)).apply {
+            topMargin = dp(22)
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+        })
+        body.addView(TextView(this).apply {
+            text = "Para revisar errores: lo que la app anotó (sin fotos) y tus ajustes"
+            textSize = 11.5f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0x99FFFFFF.toInt())
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+
+        body.addView(TextView(this).apply {
             text = "Listo"
             textSize = 16f
             gravity = android.view.Gravity.CENTER
@@ -1449,6 +1482,23 @@ class MainActivity : ComponentActivity() {
         updateRecorderLuts()
         updateNightBadge()
         return fx
+    }
+
+    /** Los ajustes del momento, en una línea, para el registro. */
+    private fun settingsSummary(): String = buildString {
+        append("modo=").append(mode.name)
+        append(" cámara=").append(if (lensFacing == CameraSelector.LENS_FACING_FRONT) "frontal" else "trasera")
+        append(" calidad=").append(resButton.text)
+        append(" zsl=").append(if (zslAsked && zslSupported()) "sí" else "no")
+        append(" noche-auto=").append(nightAuto).append(" poca-luz=").append(lowLight)
+        append(" ganancia=").append(String.format(java.util.Locale.US, "%.2f", digitalGain))
+        append(" mejora=").append(Enhance.enabled(this@MainActivity))
+        append(" viva=").append(vividOn)
+        append(" belleza=").append(Beauty.enabled)
+        append(" selfie=").append(if (mirrorSelfies()) "como-te-ves" else "como-te-ven")
+        append(" live=").append(liveActive)
+        append(" flash=").append(flashMode)
+        append(" xiaomi=").append(vendorExt)
     }
 
     // ---------- Panel de rendimiento (Ajustes > Rendimiento; apagado por defecto) ----------
@@ -3207,8 +3257,15 @@ class MainActivity : ComponentActivity() {
         main.postDelayed(spinSafety, 30_000)
     }
 
+    /** Cuándo se tocó el botón (para el registro: cuánto tardó en quedar lista). */
+    private var shotAt = 0L
+
     private fun processingEnd() {
         perf?.ready()
+        if (shotAt > 0L) {
+            Log.i(TAG, "Foto lista en ${android.os.SystemClock.elapsedRealtime() - shotAt} ms")
+            shotAt = 0L
+        }
         pendingSaves = (pendingSaves - 1).coerceAtLeast(0)
         if (pendingSaves == 0) {
             main.removeCallbacks(spinSafety)
@@ -3264,6 +3321,10 @@ class MainActivity : ComponentActivity() {
         val maxG = Brightness.maxGain(userEv)
         // Noche: unas fotos más, iguales, para juntarlas (menos grano, como el iPhone)
         val burst = if (pre != null) 0 else nightBurstCount(currentMode, screenLit)
+        shotAt = android.os.SystemClock.elapsedRealtime()
+        Log.i(TAG, "Disparo: ${currentMode.name} ${if (front) "frontal" else "trasera"} noche=$dark ganancia=" +
+            String.format(java.util.Locale.US, "%.2f", digitalGain) + " ev=$evBias fotos=${1 + burst} live=$live " +
+            "viva=$vivid zsl=$zslAsked pantalla=$screenLit al-apoyar=${pre != null}")
         // Foto al apoyar el dedo: el instante ya quedó; el aviso (clic) va al soltar
         if (pre == null) holdStart(1 + burst)
         if (live && pre == null) {

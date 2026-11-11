@@ -45,6 +45,7 @@ class GalleryActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Registro.install(this)
         setContentView(R.layout.activity_gallery)
         grid = findViewById(R.id.grid)
         count = findViewById(R.id.count)

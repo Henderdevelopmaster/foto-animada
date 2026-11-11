@@ -64,6 +64,7 @@ object Enhance {
         aim: Float = 0f, maxGain: Float = 1f, vivid: Boolean = false,
         auto: Boolean = enabled(context) || night || sunset,
     ): Bitmap {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         val w = bmp.width
         val h = bmp.height
         val px = IntArray(w * h)
@@ -74,7 +75,8 @@ object Enhance {
             night = night, sunset = sunset, faces = faces, threads = threads, aim = aim, maxGain = maxGain,
             naturalSkin = !Beauty.enabled, strength = if (auto) 1f else 0f, vivid = if (vivid) 1f else 0f,
         ))
-        Log.d(TAG, "${w}x$h $rep")
+        Log.i(TAG, "Mejora ${w}x$h en ${android.os.SystemClock.elapsedRealtime() - t0} ms (caras ${faces.size}, " +
+            "noche=$night, viva=$vivid, auto=$auto): $rep")
         val out = if (bmp.isMutable) bmp else bmp.copy(Bitmap.Config.ARGB_8888, true)
         out.setPixels(px, 0, w, 0, 0, w, h)
         return out
