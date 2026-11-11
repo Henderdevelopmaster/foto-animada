@@ -175,6 +175,10 @@ cabe y se cierra tocando fuera o con "Listo".
   foto desde el toque ("Disparo"), cuánto tarda en quedar lista ("Lista"), la memoria en uso,
   si van ZSL, Live y Viva, y si Xiaomi deja usar su procesado (HDR, Noche, Auto…) desde otras
   apps ("Procesado Xiaomi"). Sirve para optimizar con números del cel de verdad.
+- **Compartir registro** (botón al final de Ajustes): arma un .txt con la versión, el cel, los
+  ajustes, el último cierre inesperado (si hubo) y lo que la app anotó (disparos, fotos de noche,
+  mejoras y tiempos). Queda en Descargas/Camaratrix y se abre el menú de compartir. No lleva
+  fotos. Es lo que hay que mandar cuando algo falla.
 
 ## 8. Guardado
 

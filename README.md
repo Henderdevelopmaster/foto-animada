@@ -20,3 +20,10 @@ Descárgalo desde el celular e instálalo (permite "instalar apps desconocidas")
 ## Stack
 
 Kotlin, CameraX, MediaCodec, MediaMuxer. minSdk 29 (Android 10).
+
+## Para trabajar en el código
+
+- [AGENTS.md](AGENTS.md): guía para Codex y otros agentes (reglas, mapa del código, registros).
+- [docs/FLUJO.md](docs/FLUJO.md): el flujo completo de la app y lo que se espera de cada cosa.
+- [docs/FUNCION_PRINCIPAL.md](docs/FUNCION_PRINCIPAL.md): del toque a la foto guardada, con enlaces al código.
+- [docs/CHANGELOG.md](docs/CHANGELOG.md): qué cambió en cada versión.
