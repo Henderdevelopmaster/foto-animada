@@ -255,6 +255,9 @@ cabe y se cierra tocando fuera o con "Listo".
 
 ## 11. Cómo probar (lista rápida)
 
+Para probar `dev` en el cel, abre la ejecución de «Compilar APK» en GitHub Actions,
+descarga `Camaratrix-dev-<número>` desde Artifacts y extrae el APK del ZIP.
+
 1. FOTO a algo que se mueva (carro, tren, mano): la foto debe mostrar el instante del toque.
 2. FOTO con LIVE: al abrir, el movimiento corto debe terminar en la foto. Al mantener, revisar
    que el clip incluya el movimiento antes y después de la marca de la foto y que al soltar vuelva
