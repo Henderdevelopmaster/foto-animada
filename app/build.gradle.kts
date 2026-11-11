@@ -41,6 +41,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     val camerax = "1.4.1"
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")

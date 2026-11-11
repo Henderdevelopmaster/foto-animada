@@ -40,30 +40,33 @@ object MotionPhotoWriter {
         val samples = clip.samples.subList(start, clip.samples.size)
         val base = samples.first().ptsUs
 
-        val file = File(cacheDir, "clip.mp4")
-        file.delete()
-        val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        muxer.setOrientationHint(clip.rotation)
-        val videoTrack = muxer.addTrack(clip.format)
-        val audioTrack = clip.audio?.let { muxer.addTrack(it.format) } ?: -1
-        muxer.start()
+        val file = File.createTempFile("clip_", ".mp4", cacheDir)
+        try {
+            val muxer = MediaMuxer(file.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            try {
+                muxer.setOrientationHint(clip.rotation)
+                val videoTrack = muxer.addTrack(clip.format)
+                val audioTrack = clip.audio?.let { muxer.addTrack(it.format) } ?: -1
+                muxer.start()
 
-        // Intercalar video y audio en orden de tiempo
-        val end = samples.last().ptsUs
-        val audioSamples = clip.audio?.samples?.filter { it.ptsUs in base..end } ?: emptyList()
-        val all = samples.map { videoTrack to it } + audioSamples.map { audioTrack to it }
-        val info = MediaCodec.BufferInfo()
-        for ((track, s) in all.sortedBy { it.second.ptsUs }) {
-            val flags = if (track == videoTrack && s.isKey) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-            info.set(0, s.data.size, s.ptsUs - base, flags)
-            muxer.writeSampleData(track, ByteBuffer.wrap(s.data), info)
+                // Intercalar video y audio en orden de tiempo
+                val end = samples.last().ptsUs
+                val audioSamples = clip.audio?.samples?.filter { it.ptsUs in base..end } ?: emptyList()
+                val all = samples.map { videoTrack to it } + audioSamples.map { audioTrack to it }
+                val info = MediaCodec.BufferInfo()
+                for ((track, s) in all.sortedBy { it.second.ptsUs }) {
+                    val flags = if (track == videoTrack && s.isKey) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                    info.set(0, s.data.size, s.ptsUs - base, flags)
+                    muxer.writeSampleData(track, ByteBuffer.wrap(s.data), info)
+                }
+                muxer.stop()
+            } finally {
+                muxer.release()
+            }
+            return Mp4(file.readBytes(), (clip.keyPtsUs - base).coerceAtLeast(0))
+        } finally {
+            file.delete()
         }
-        muxer.stop()
-        muxer.release()
-
-        val bytes = file.readBytes()
-        file.delete()
-        return Mp4(bytes, (clip.keyPtsUs - base).coerceAtLeast(0))
     }
 
     fun buildXmp(videoLength: Int, presentationUs: Long, filter: PhotoFilter = PhotoFilter.ORIGINAL): String = """
@@ -134,22 +137,29 @@ object MotionPhotoWriter {
         }
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("No se pudo crear el archivo en la galería")
-        resolver.openOutputStream(uri)!!.use { out ->
-            out.write(jpeg)
-            if (mp4 != null) out.write(mp4)
-        }
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
+        publishPendingPhoto(
+            write = {
+                val stream = resolver.openOutputStream(uri)
+                    ?: throw java.io.IOException("No se pudo abrir el archivo")
+                stream.use { out ->
+                    out.write(jpeg)
+                    if (mp4 != null) out.write(mp4)
+                }
+            },
+            publish = {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                if (resolver.update(uri, values, null, null) != 1) {
+                    throw java.io.IOException("No se pudo publicar la foto en la galería")
+                }
+            },
+            discard = {
+                if (resolver.delete(uri, null, null) != 1) {
+                    throw java.io.IOException("No se pudo borrar el archivo pendiente")
+                }
+            },
+        )
         return uri
-    }
-
-    /** Reemplaza el contenido de una foto ya guardada (para la versión mejorada). */
-    fun replace(context: Context, uri: Uri, jpeg: ByteArray, mp4: ByteArray?) {
-        context.contentResolver.openOutputStream(uri, "wt")!!.use { out ->
-            out.write(jpeg)
-            if (mp4 != null) out.write(mp4)
-        }
     }
 
     private val offsetRegex = Regex("""GCamera:MicroVideoOffset="(\d+)"""")

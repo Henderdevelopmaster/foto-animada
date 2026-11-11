@@ -3,7 +3,7 @@
 Este documento es la referencia de la app. Cualquier cambio, lo haga Claude o Codex, tiene que
 cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 
-Última revisión: 10 de noviembre de 2026. Si cambias algo de la app, actualiza este documento.
+Última revisión: 11 de noviembre de 2026. Si cambias algo de la app, actualiza este documento.
 
 ---
 
@@ -182,18 +182,24 @@ cabe y se cierra tocando fuera o con "Listo".
 
 ## 8. Guardado
 
-1. La foto tal cual sale de la cámara se guarda **al instante** (ya aparece en la galería).
-   **De noche no:** esa versión sale oscura, morada y con grano, así que se guarda una sola
-   vez, ya lista (el aro gira mientras tanto). Si algo falla, queda la de la cámara.
-2. Por detrás: noche (juntar fotos), mejora, filtro; luego se reemplaza el mismo archivo.
-3. El aro de la miniatura gira hasta que termina el paso 2.
-4. Si el paso 2 falla, queda la foto del paso 1 (nunca se pierde la foto).
+1. En FOTO, el aro gira mientras se prepara la versión que se va a guardar. Si no hay mejoras
+   pendientes, se escribe directamente la captura. La galería muestra un solo archivo, completo.
+2. Si fallan la mejora o la escritura de la versión mejorada, se intenta guardar la captura
+   original. Si falla el armado o el guardado del Live, se intenta guardar el JPEG y se avisa
+   «Se guardó sin movimiento» cuando queda guardado.
+3. MediaStore recibe un archivo pendiente. Solo aparece en la galería cuando se ha escrito y
+   cerrado completo. Si falla la escritura o la publicación, se intenta borrar esa entrada
+   pendiente. Si tampoco se puede guardar el original, se avisa «No se pudo guardar la foto».
+4. Terminar de guardar una foto actualiza el aro y la miniatura. El obturador y el aviso LIVE
+   los controla la captura activa.
 
 ## 9. Galería y visor
 
 - Galería en cuadrícula de 4; miniaturas pedidas más grandes que la casilla (nítidas).
-- Visor: foto a 1.5 veces la pantalla; Live: mantener presionado para verlo moverse
-  (a 900 px y 20 cuadros por segundo).
+- Visor: al abrir un Live, el movimiento corto y silencioso termina en la marca de la foto.
+  Mantener presionado reproduce el clip con ExoPlayer alrededor de esa marca, con audio si se
+  grabó. Al soltar, vuelve la foto. Los efectos Bucle, Rebote y Exposición larga usan fotogramas
+  decodificados aparte.
 - Efecto Live: Live, Bucle, Rebote, Exposición larga, Desactivado.
 - Compartir Live: historia 9:16, video, GIF o foto. Editar en CapCut u otra app.
 
@@ -229,8 +235,12 @@ cabe y se cierra tocando fuera o con "Listo".
 
 - Con LIVE prendido, la cámara queda ocupada ~1.5 s después de cada foto (espera el final del
   video). Para fotos seguidas con LIVE hay que permitir varios videos a la vez.
-- Reproducir el Live con un reproductor de video (resolución completa, 30 cuadros por segundo)
-  en vez de imágenes sueltas.
+- Probar salida al fondo con un Live pendiente. El grabador necesita cuadros nuevos para
+  completar la solicitud. La recuperación por tiempo real queda pendiente.
+- Proteger las ediciones de portada Live y las ediciones en el mismo archivo del visor si falla
+  la escritura. Revisar también los respaldos al fallar INSTANTÁNEA, EFECTOS, ATARDECER y LUNA.
+- Extensiones del fabricante: «Procesado Xiaomi» consulta disponibilidad por lente. Falta probar
+  que cada opción detectada abra una sesión y guarde una foto en el Redmi.
 - Disparo al apoyar el dedo también en INSTANTÁNEA y EFECTOS.
 
 ---
@@ -238,8 +248,9 @@ cabe y se cierra tocando fuera o con "Listo".
 ## 11. Cómo probar (lista rápida)
 
 1. FOTO a algo que se mueva (carro, tren, mano): la foto debe mostrar el instante del toque.
-2. FOTO con LIVE: mantener la foto en la galería; el movimiento debe terminar exactamente en la
-   foto, sin salto.
+2. FOTO con LIVE: al abrir, el movimiento corto debe terminar en la foto. Al mantener, revisar
+   que el clip incluya el movimiento antes y después de la marca de la foto y que al soltar vuelva
+   a la imagen fija. Si se grabó voz, comprobar que se escuche durante el gesto largo.
 3. Mantener el obturador: debe grabar video y **no** guardar una foto extra.
 4. Deslizar a la izquierda: ráfaga, sin foto extra.
 5. Abrir flash y tocar el botón de flash otra vez: debe cerrarse.
@@ -258,3 +269,15 @@ cabe y se cierra tocando fuera o con "Listo".
     no debe tener fantasmas, parches ni costuras (a lo sumo un poco más de grano).
 16. Noche con la luz de la pantalla: la piel no debe salir morada.
 17. Selfie de noche con flash de pantalla: no debe salir lavada.
+
+18. FOTO de día con filtro o Viva: abrir la galería mientras gira el aro y volver a revisar
+    cuando termine. Debe quedar una sola foto completa, lista para abrir y compartir.
+19. Con una falla de escritura durante el guardado, comprobar que la galería no muestre un
+    archivo incompleto. Si hay espacio para la captura original, debe quedar legible. Si tampoco
+    se puede guardar esa captura, debe salir un aviso y funcionar el siguiente disparo.
+20. Con un clip que no se pueda armar, comprobar que quede un JPEG legible y salga
+    «Se guardó sin movimiento». Disparar otra vez mientras termina una mejora anterior y
+    comprobar que el guardado anterior no libere el obturador ni oculte LIVE antes de tiempo.
+21. Probar en Ajustes > Rendimiento > Mostrar y compartir el registro. Anotar Android y HyperOS,
+    lente y modos que aparecen en «Procesado Xiaomi». Para validar un candidato hace falta
+    probar Preview + ImageCapture y después comprobar ImageAnalysis, QR y LIVE por separado.

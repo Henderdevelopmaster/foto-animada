@@ -861,7 +861,7 @@ class MainActivity : ComponentActivity() {
         playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         recTimer.visibility = View.GONE
         shutter.setBackgroundResource(R.drawable.shutter)
-        showToast("Guardando video…")
+        processingStart("Guardando video…")
         engine.stopRecording { clip ->
             ioExecutor.execute {
                 var msg: String? = null
@@ -2391,6 +2391,7 @@ class MainActivity : ComponentActivity() {
                     audio.keepUs = 6_000_000
                     recorder.enabled = liveActive
                     updateAudio()
+                    busy = false
                 }
                 finishSave(msg)
             }
@@ -2409,7 +2410,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun burstShot() {
-        val ic = imageCapture ?: return stopBurst()
+        val ic = imageCapture ?: return finishBurst("No se pudo tomar la foto")
         if (!bursting) return
         val f = filter
         val file = File(cacheDir, "burst.jpg")
@@ -2422,7 +2423,11 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val bytes = file.readBytes()
+                    val bytes = readCapturedJpeg(file)
+                    if (bytes == null) {
+                        runOnUiThread { finishBurst("No se pudo tomar la foto") }
+                        return
+                    }
                     burstCount++
                     try {
                         MotionPhotoWriter.save(this@MainActivity, MotionPhotoWriter.applyFilter(bytes, f), null, "_BURST$burstCount")
@@ -2431,23 +2436,29 @@ class MainActivity : ComponentActivity() {
                     }
                     runOnUiThread {
                         recTimer.text = burstCount.toString()
-                        if (bursting && burstCount < 50) burstShot() else stopBurst()
+                        if (bursting && burstCount < 50) burstShot() else finishBurst()
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    runOnUiThread { stopBurst() }
+                    file.delete()
+                    runOnUiThread { finishBurst("No se pudo tomar la foto") }
                 }
             }
         )
     }
 
     private fun stopBurst() {
-        if (!bursting && !busy) return
         bursting = false
         recTimer.visibility = View.GONE
+    }
+
+    private fun finishBurst(error: String? = null) {
+        stopBurst()
+        busy = false
         val n = burstCount
-        ioExecutor.execute { finishSave(if (n > 0) "Ráfaga: $n fotos" else null) }
+        processingStart()
+        ioExecutor.execute { finishSave(error ?: if (n > 0) "Ráfaga: $n fotos" else null) }
     }
 
     // ---------- Modo VIDEO (1080p con CameraX) ----------
@@ -3349,7 +3360,7 @@ class MainActivity : ComponentActivity() {
                 // La cámara queda libre ya; el procesado sigue por detrás
                 runOnUiThread {
                     busy = false
-                    if (live) livePill.animate().alpha(0f).setDuration(200).start()
+                    if (live) livePill.visibility = View.GONE
                     if (pre != null) processingStart(processingNote(currentMode, dark))
                 }
                 saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG, vivid)
@@ -3388,10 +3399,9 @@ class MainActivity : ComponentActivity() {
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     if (screenLit) main.post { if (screenFlash.visibility == View.VISIBLE) hideScreenFlash() }
-                    val bytes = photoFile.readBytes()
-                    photoFile.delete()
+                    val bytes = readCapturedJpeg(photoFile)
                     synchronized(lock) { photo = bytes }
-                    if (burst > 0) {
+                    if (burst > 0 && bytes != null) {
                         main.post {
                             grabBurst(burst) { list ->
                                 synchronized(lock) { extras = list }
@@ -3401,7 +3411,9 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     } else {
-                        if (pre == null) main.post { holdEnd(processing = true, note = processingNote(currentMode, dark)) }
+                        if (pre == null) main.post {
+                            holdEnd(processing = true, note = if (bytes != null) processingNote(currentMode, dark) else null)
+                        }
                         finishOne()
                     }
                 }
@@ -3409,7 +3421,7 @@ class MainActivity : ComponentActivity() {
                 override fun onError(exception: ImageCaptureException) {
                     Log.e(TAG, "Error tomando la foto", exception)
                     if (screenLit) main.post { hideScreenFlash() }
-                    if (pre == null) main.post { holdEnd(processing = false) }
+                    if (pre == null) main.post { holdEnd(processing = true) }
                     photoFile.delete()
                     finishOne()
                 }
@@ -3563,6 +3575,15 @@ class MainActivity : ComponentActivity() {
     }
     private var thumbsBusy = false
 
+    private fun readCapturedJpeg(file: File): ByteArray? = try {
+        file.readBytes().takeIf { it.isNotEmpty() }
+    } catch (e: java.io.IOException) {
+        Log.e(TAG, "No se pudo leer la foto temporal", e)
+        null
+    } finally {
+        file.delete()
+    }
+
     /** Una foto a memoria (para fotomatón). */
     private fun grab(onStarted: (() -> Unit)? = null, onDone: (ByteArray?) -> Unit) {
         val ic = imageCapture ?: return onDone(null)
@@ -3574,9 +3595,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val b = f.readBytes()
-                    f.delete()
-                    onDone(b)
+                    onDone(readCapturedJpeg(f))
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -3678,51 +3697,64 @@ class MainActivity : ComponentActivity() {
             finishSave("No se pudo tomar la foto")
             return
         }
-        try {
-            val mp4 = clip?.let { MotionPhotoWriter.muxToMp4(it, cacheDir) }
-            val xmp = mp4?.let { MotionPhotoWriter.buildXmp(it.bytes.size, it.presentationUs, f) }
-            // De noche la foto tal cual sale oscura, morada y con grano: no se muestra (si alguien
-            // la abría o la compartía antes de tiempo, se llevaba esa). Se guarda una vez, ya lista.
-            if (dark || extras.isNotEmpty()) {
-                val final = if (isHuge(photo)) photo else try {
-                    var bmp = mergeNightBitmap(photo, extras) ?: Processing.decode(photo, 4096)
-                    bmp = Enhance.bitmap(this, bmp, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
-                    MotionPhotoWriter.applyFilter(Processing.encode(bmp, 95).also { bmp.recycle() }, f)
-                } catch (e: Throwable) {
-                    // Si algo falla queda la de la cámara: la foto nunca se pierde
-                    Log.e(TAG, "No se pudo mejorar la foto de noche", e)
-                    photo
+        val improved = try {
+            when {
+                (dark || extras.isNotEmpty()) && !isHuge(photo) -> {
+                    val base = mergeNightBitmap(photo, extras) ?: Processing.decode(photo, 4096)
+                    val jpeg = try {
+                        val bmp = Enhance.bitmap(this, base, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
+                        try {
+                            Processing.encode(bmp, 95)
+                        } finally {
+                            if (bmp !== base) bmp.recycle()
+                        }
+                    } finally {
+                        base.recycle()
+                    }
+                    MotionPhotoWriter.applyFilter(jpeg, f)
                 }
-                MotionPhotoWriter.save(this, if (xmp != null) MotionPhotoWriter.insertXmp(final, xmp) else final, mp4?.bytes)
-                finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
+                dark || extras.isNotEmpty() -> photo
+                Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || vivid -> {
+                    val jpeg = Enhance.jpeg(this, photo, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
+                    MotionPhotoWriter.applyFilter(jpeg, f)
+                }
+                else -> photo
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "No se pudo mejorar la foto", e)
+            photo
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "No hubo memoria para mejorar la foto", e)
+            photo
+        }
+
+        if (clip != null) {
+            val savedMotion = try {
+                val mp4 = MotionPhotoWriter.muxToMp4(clip, cacheDir)
+                val xmp = MotionPhotoWriter.buildXmp(mp4.bytes.size, mp4.presentationUs, f)
+                MotionPhotoWriter.save(this, MotionPhotoWriter.insertXmp(improved, xmp), mp4.bytes)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "No se pudo guardar el movimiento", e)
+                false
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "No hubo memoria para guardar el movimiento", e)
+                false
+            }
+            if (savedMotion) {
+                finishSave(null)
                 return
             }
-            // 1) La foto tal cual sale de la cámara: aparece en la galería en seguida
-            val quick = if (xmp != null) MotionPhotoWriter.insertXmp(photo, xmp) else photo
-            val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
-            val improve = Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty() || vivid
-            // El aro de la miniatura sigue girando hasta que esté la versión final
-            finishSave(if (live && clip == null) "Se guardó sin movimiento" else null, endProcessing = !improve)
-            // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
-            if (improve) {
-                try {
-                    val base = mergeNight(photo, extras)
-                    val better = MotionPhotoWriter.applyFilter(
-                        Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG, vivid = vivid), f)
-                    val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
-                    MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
-                    refreshThumbnail()
-                } catch (e: Throwable) {
-                    // La foto tal cual ya quedó guardada: solo no se pudo mejorar
-                    Log.e(TAG, "No se pudo mejorar la foto", e)
-                } finally {
-                    runOnUiThread { processingEnd() }
-                }
-            }
-        } catch (e: Throwable) {
-            Log.e(TAG, "Error guardando", e)
-            finishSave("Error: ${e.message}")
         }
+
+        val message = try {
+            MotionPhotoWriter.save(this, improved, null)
+            if (live) "Se guardó sin movimiento" else null
+        } catch (e: Exception) {
+            Log.e(TAG, "No se pudo guardar la foto", e)
+            if (improved === photo) "No se pudo guardar la foto" else saveOriginalPhoto(photo)
+        }
+        finishSave(message)
     }
 
     private fun saveInstant(photo: ByteArray?, dark: Boolean = false, aim: Float = 0f, maxG: Float = 1f, vivid: Boolean = false) {
@@ -3754,14 +3786,17 @@ class MainActivity : ComponentActivity() {
             null
         } catch (e: Throwable) {
             Log.e(TAG, "Proceso $suffix", e)
-            // Si falla (ej. el modelo aún se descarga), guardar la foto normal
-            try {
-                MotionPhotoWriter.save(this, photo, null)
-            } catch (_: Throwable) {
-            }
-            "Se guardó sin efecto: ${e.message}"
+            saveOriginalPhoto(photo)
         }
         finishSave(msg)
+    }
+
+    private fun saveOriginalPhoto(photo: ByteArray): String = try {
+        MotionPhotoWriter.save(this, photo, null)
+        "Se guardó la foto original"
+    } catch (e: Exception) {
+        Log.e(TAG, "No se pudo guardar la foto original", e)
+        "No se pudo guardar la foto"
     }
 
     // ---------- Instantánea tipo IG ----------
@@ -4211,6 +4246,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     recorder.timelapseStep = 0
                     recorder.enabled = liveActive
+                    busy = false
                 }
                 finishSave(msg)
             }
@@ -4367,14 +4403,16 @@ class MainActivity : ComponentActivity() {
     private fun diff(a: Int, b: Int): Int =
         abs(((a shr 16) and 255) - ((b shr 16) and 255)) + abs(((a shr 8) and 255) - ((b shr 8) and 255)) + abs((a and 255) - (b and 255))
 
-    /** [endProcessing] = false cuando la foto ya está en la galería pero aún se está mejorando. */
-    private fun finishSave(message: String?, endProcessing: Boolean = true) {
-        val thumb = roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
-            ?.let { MediaRepo.thumbnail(this, it.uri, 320) })
+    private fun finishSave(message: String?) {
+        val thumb = try {
+            roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
+                ?.let { MediaRepo.thumbnail(this, it.uri, 320) })
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo actualizar la miniatura", e)
+            null
+        }
         runOnUiThread {
-            busy = false
-            livePill.visibility = View.GONE
-            if (endProcessing) processingEnd()
+            processingEnd()
             message?.let { showToast(it) }
             if (thumb != null) {
                 thumbnail.setImageBitmap(thumb)

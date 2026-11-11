@@ -46,10 +46,11 @@ Aquí está el camino completo en el código, en orden. Los enlaces van a la lí
 | EFECTOS | `saveEffectPhoto` |
 
 [`saveResult`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MainActivity.kt#L3673) (FOTO), el caso más usado:
-- **De día:** guarda al instante la foto tal cual (ya aparece en la galería), la mejora en segundo
-  plano (`Enhance.jpeg` + filtro) y la reemplaza (`MotionPhotoWriter.replace`).
-- **De noche:** junta las fotos ([`mergeNightBitmap`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MainActivity.kt#L3646) → `NightStack`), la mejora
-  (`Enhance.bitmap`) y la guarda **una sola vez**, ya lista. Si algo falla, guarda la original.
+- **De día:** prepara en segundo plano la mejora y el filtro cuando están activos.
+- **De noche:** junta las fotos ([`mergeNightBitmap`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MainActivity.kt#L3646) → `NightStack`) y las mejora
+  con `Enhance.bitmap`.
+- Publica una sola foto, ya escrita por completo. Si falla la mejora, usa la captura original.
+  Si falla el video del Live, guarda el JPEG cuando es posible.
 - Al final, [`finishSave`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MainActivity.kt#L4371) actualiza la miniatura y
   [`processingEnd`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MainActivity.kt#L3263) apaga el aro y anota "Foto lista en N ms".
 
@@ -70,8 +71,8 @@ Aquí está el camino completo en el código, en orden. Los enlaces van a la lí
 
 - [`muxToMp4`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MotionPhotoWriter.kt#L35) arma el MP4 del Live; el JPEG lleva XMP de Motion
   Photo y el MP4 pegado al final (Google Fotos lo reproduce).
-- [`save`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MotionPhotoWriter.kt#L125) y [`replace`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MotionPhotoWriter.kt#L148)
-  escriben en MediaStore (DCIM).
+- [`save`](https://github.com/Henderdevelopmaster/foto-animada/blob/main/app/src/main/java/com/hender/fotoanimada/MotionPhotoWriter.kt#L125)
+  escribe en una entrada pendiente de MediaStore (DCIM) y la publica al cerrar el archivo.
 
 ## 5. Después
 
