@@ -11,8 +11,9 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 import java.util.concurrent.TimeUnit
 
 /**
- * Mejora automática de cada foto (ver [EnhanceCore]). Va siempre activada,
- * aunque se puede apagar en el panel de Calidad para comparar.
+ * Mejora automática de cada foto (ver [EnhanceCore]). Va activada por defecto y se puede
+ * apagar en Ajustes para comparar. Viva (más nitidez y color) va aparte: solo si el usuario
+ * la prende con su botón.
  */
 object Enhance {
 
@@ -32,19 +33,22 @@ object Enhance {
     /**
      * Devuelve la foto mejorada. Si algo falla, devuelve la original tal cual.
      * [aim] > 0 = de noche: la foto se sube igual que se veía la vista previa ([Brightness]).
+     * [vivid] = Viva prendida (más nitidez y color). [auto] = la mejora automática (con ella
+     * apagada y Viva prendida, la foto lleva solo Viva).
      */
     fun jpeg(
         context: Context, jpeg: ByteArray, night: Boolean = false, sunset: Boolean = false,
-        aim: Float = 0f, maxGain: Float = 1f,
+        aim: Float = 0f, maxGain: Float = 1f, vivid: Boolean = false,
+        auto: Boolean = enabled(context) || night || sunset,
     ): ByteArray {
-        if (!enabled(context) && !sunset && !night) return jpeg
+        if (!auto && !vivid) return jpeg
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
             // Las fotos gigantes (modo MÁX) se dejan con todo su detalle
             if (bounds.outWidth.toLong() * bounds.outHeight > 17_000_000L) return jpeg
             val bmp = Processing.decode(jpeg, 8192)
-            val out = bitmap(context, bmp, night, sunset, aim, maxGain)
+            val out = bitmap(context, bmp, night, sunset, aim, maxGain, vivid, auto)
             val bytes = Processing.encode(out, 95)
             out.recycle()
             bytes
@@ -57,7 +61,8 @@ object Enhance {
     /** Mejora un bitmap mutable en el lugar y lo devuelve. */
     fun bitmap(
         context: Context, bmp: Bitmap, night: Boolean = false, sunset: Boolean = false,
-        aim: Float = 0f, maxGain: Float = 1f,
+        aim: Float = 0f, maxGain: Float = 1f, vivid: Boolean = false,
+        auto: Boolean = enabled(context) || night || sunset,
     ): Bitmap {
         val w = bmp.width
         val h = bmp.height
@@ -67,7 +72,7 @@ object Enhance {
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
         val rep = EnhanceCore.process(px, w, h, EnhanceCore.Options(
             night = night, sunset = sunset, faces = faces, threads = threads, aim = aim, maxGain = maxGain,
-            naturalSkin = !Beauty.enabled,
+            naturalSkin = !Beauty.enabled, strength = if (auto) 1f else 0f, vivid = if (vivid) 1f else 0f,
         ))
         Log.d(TAG, "${w}x$h $rep")
         val out = if (bmp.isMutable) bmp else bmp.copy(Bitmap.Config.ARGB_8888, true)

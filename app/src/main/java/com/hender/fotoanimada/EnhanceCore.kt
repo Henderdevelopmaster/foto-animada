@@ -37,6 +37,11 @@ object EnhanceCore {
         val maxGain: Float = 1f,
         /** Belleza apagada: la piel de las caras conserva su textura (no se alisa). */
         val naturalSkin: Boolean = false,
+        /**
+         * Viva (solo si el usuario la prende): más nitidez, contraste local y color.
+         * 0 = apagada, 1 = completa. Con [strength] 0 queda solo esto (mejora automática apagada).
+         */
+        val vivid: Float = 0f,
     )
 
     class Report(
@@ -77,6 +82,9 @@ object EnhanceCore {
         val sh = s.h
         val n = sw * sh
         val k = o.strength.coerceIn(0f, 1.5f)
+        // Viva: de noche va a la mitad (más contraste o nitidez también subiría el grano)
+        val viv = o.vivid.coerceIn(0f, 1f)
+        val vn = if (o.night) viv * 0.45f else viv
 
         // Caras: el anti-halo no las toca (el brillo de la piel no es un bombillo; antes la
         // dejaba gris, como una mancha de ceniza en el cachete)
@@ -209,6 +217,22 @@ object EnhanceCore {
         val hiLo = fastLog2(0.30f)
         val hiHi = fastLog2(0.80f)
 
+        // Viva: contraste local de tamaño medio (texturas, nubes, hojas, pelo), medido en la
+        // versión pequeña (ahí no hay grano). Poco en sombras profundas, en luces y en caras.
+        // Donde hay un borde fuerte el filtro guiado ya lo sigue, así que no quedan halos.
+        val clarity = CLARITY * vn
+        val detail: FloatArray? = if (clarity > 0.01f) {
+            val dLo = fastLog2(0.025f)
+            val dLo2 = fastLog2(0.10f)
+            val dHi = fastLog2(0.55f)
+            val dHi2 = fastLog2(0.95f)
+            FloatArray(n) {
+                val bb = base[it]
+                val wgt = smooth(dLo, dLo2, bb) * (1f - 0.6f * smooth(dHi, dHi2, bb)) * (1f - 0.75f * faceGuard[it])
+                (l[it] - bb).coerceIn(-0.7f, 0.7f) * wgt * clarity
+            }
+        } else null
+
         // Caras en sombra: subirlas un poco (relativo a la escena, no a un tono fijo)
         val faceMap = FloatArray(n)
         var faceBoost = 0f
@@ -265,6 +289,9 @@ object EnhanceCore {
         wbR *= 1f + 0.012f * min(k, 1f)
         wbB *= 1f - 0.012f * min(k, 1f)
         val vibrance = (if (o.night) 0.10f else if (sunsetLike) 0.26f else 0.20f) * min(k, 1f)
+        val vibExtra = VIBRANCE * vn
+        // Viva: curva S suave (negros más profundos, blancos más limpios)
+        val contrast = CONTRAST * vn
         val protectSkin = !sunsetLike || o.faces.isNotEmpty()
 
         // ---- 4) Ruido: versiones a 1/2 (luz) y 1/4 (color) -------------------
@@ -282,8 +309,11 @@ object EnhanceCore {
         }
         val noise = estimateNoise(px, w, h, half, hw, hh)
         val t = max(noise * 2.2f, 0.004f)
-        val keep = if (o.night) 0.30f else 0.45f
-        val sharpen = if (o.night) 0.08f else 0.26f
+        // Con la mejora apagada (solo Viva) no se quita grano: la foto queda como salió
+        val keep = 1f - (1f - (if (o.night) 0.30f else 0.45f)) * min(k, 1f)
+        val sharpen = (if (o.night) 0.08f else 0.26f) * min(k, 1f) + SHARPEN * vn
+        // En la cara, Viva no marca los poros (la nitidez de más va al resto)
+        val skinSharp = SHARPEN * vn * 0.7f
         val chromaMix = (if (o.night || noise > 0.012f) 0.9f else 0.65f) * min(k, 1f)
 
         // ---- 5) Pasada final a resolución completa (en paralelo por filas) ----
@@ -298,7 +328,8 @@ object EnhanceCore {
                 val sA = Sampler(gfA, sw, sh, f.toFloat(), w)
                 val sB = Sampler(gfB, sw, sh, f.toFloat(), w)
                 val sF = Sampler(faceMap, sw, sh, f.toFloat(), w)
-                val sP = if (o.naturalSkin && o.faces.isNotEmpty()) Sampler(faceGuard, sw, sh, f.toFloat(), w) else null
+                val sP = if ((o.naturalSkin || vn > 0f) && o.faces.isNotEmpty()) Sampler(faceGuard, sw, sh, f.toFloat(), w) else null
+                val sD = detail?.let { Sampler(it, sw, sh, f.toFloat(), w) }
                 val sGr = gl?.let { Sampler(it[0], sw, sh, f.toFloat(), w) }
                 val sGg = gl?.let { Sampler(it[1], sw, sh, f.toFloat(), w) }
                 val sGb = gl?.let { Sampler(it[2], sw, sh, f.toFloat(), w) }
@@ -306,7 +337,7 @@ object EnhanceCore {
                 val sCb = Sampler(qcb, q.w, q.h, 4f, w)
                 val sCr = Sampler(qcr, q.w, q.h, 4f, w)
                 for (y in y0 until y1) {
-                    sA.row(y); sB.row(y); sF.row(y); sH.row(y); sCb.row(y); sCr.row(y); sP?.row(y)
+                    sA.row(y); sB.row(y); sF.row(y); sH.row(y); sCb.row(y); sCr.row(y); sP?.row(y); sD?.row(y)
                     sGr?.row(y); sGg?.row(y); sGb?.row(y)
                     var i = y * w
                     for (x in 0 until w) {
@@ -336,8 +367,10 @@ object EnhanceCore {
                         val d = y0l - sH.at(x)
                         val ad = abs(d)
                         // En la cara, con la belleza apagada, casi no se alisa (poros y textura reales)
-                        val kp = if (sP != null) keep + (0.85f - keep) * sP.at(x) else keep
-                        val gain = kp + (1f + sharpen - kp) * smooth(0.5f * t, 1.6f * t, ad)
+                        val face = sP?.at(x) ?: 0f
+                        val kp = if (o.naturalSkin && face > 0f) keep + (max(keep, 0.85f) - keep) * face else keep
+                        val shp = sharpen - skinSharp * face
+                        val gain = kp + (1f + shp - kp) * smooth(0.5f * t, 1.6f * t, ad)
                         yy += d * (gain - 1f)
                         cbv += chromaMix * (sCb.at(x) - (b0 - y0l))
                         crv += chromaMix * (sCr.at(x) - (r0 - y0l))
@@ -350,6 +383,7 @@ object EnhanceCore {
                         var off = exposure + squeeze(rel, compress, nightAim) + sF.at(x)
                         // Lo que ya está claro no se sube (ni en la cara): así no se quema
                         if (off > 0f) off *= 1f - smooth(hiLo, hiHi, bse)
+                        if (sD != null) off += sD.at(x)
                         val ratio = fastExp2(off)
                         yy *= ratio
                         cbv *= ratio
@@ -364,7 +398,8 @@ object EnhanceCore {
                         val mn = min(r, min(g, b))
                         if (mx > 1e-3f) {
                             val sat = (mx - mn) / mx
-                            var amount = vibrance * (1f - sat)
+                            // Viva le pone menos color de más a la cara (la piel no se pone naranja)
+                            var amount = (vibrance + vibExtra * (1f - 0.6f * face)) * (1f - sat)
                             if (protectSkin && r >= g && g >= b && r - b > 1e-3f) {
                                 val hue = 60f * (g - b) / (r - b) // 0..60 (rojo → amarillo)
                                 amount *= 1f - 0.75f * bump(hue, 6f, 44f)
@@ -373,6 +408,18 @@ object EnhanceCore {
                             r = ly + (r - ly) * (1f + amount)
                             g = ly + (g - ly) * (1f + amount)
                             b = ly + (b - ly) * (1f + amount)
+                        }
+                        // Viva: curva S en la luz, el mismo factor en los tres canales (no cambia el tono)
+                        if (contrast > 0f) {
+                            val ly = 0.299f * r + 0.587f * g + 0.114f * b
+                            if (ly > 1e-4f && ly < 1f) {
+                                val ct = contrast * (1f - 0.5f * face)
+                                val ys = ly + ct * (ly * ly * (3f - 2f * ly) - ly)
+                                val kc = ys / ly
+                                r *= kc
+                                g *= kc
+                                b *= kc
+                            }
                         }
                         // 5) altas luces suaves
                         px[i] = (0xFF shl 24) or (out8(r) shl 16) or (out8(g) shl 8) or out8(b)
@@ -384,6 +431,15 @@ object EnhanceCore {
         workers.forEach { it.join() }
         return Report(exposure, compress, glareAmp * glareStrength, noise, faceBoost, wbR, wbB, gainUsed)
     }
+
+    // ---------------------------------------------------------------- Viva
+
+    // Cuánto suma Viva (de noche menos de la mitad). Probado en paisajes, retratos y noche:
+    // se nota (más textura, cielo y verdes con más color, bordes limpios) sin verse falso.
+    private const val CLARITY = 0.70f
+    private const val VIBRANCE = 0.30f
+    private const val SHARPEN = 0.32f
+    private const val CONTRAST = 0.20f
 
     // ---------------------------------------------------------------- utilidades
 

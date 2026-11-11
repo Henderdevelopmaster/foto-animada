@@ -58,6 +58,12 @@ object CameraSettings {
     /** Disparo sin retraso (ZSL): "on" = la foto es del instante en que tocas. */
     const val ZSL = "zsl"
 
+    /** Viva (botón en el visor): "on" = más nitidez, contraste y color. Apagado por defecto. */
+    const val VIVID = "vivid"
+
+    /** Panel de rendimiento (Ajustes): "on" = muestra fps, demora del disparo y memoria. */
+    const val PERF = "perf"
+
     /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
     val formats = listOf("4:3", "16:9", "1:1", "full")
     fun format(c: Context) = get(c, FORMAT, "4:3").let { if (it in formats) it else "4:3" }

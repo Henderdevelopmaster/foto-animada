@@ -141,6 +141,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var lockBadge: TextView
     private var evBias = 0          // pasos de brillo que eligió el usuario (se mantienen)
     private lateinit var evButton: TextView
+    private lateinit var vividButton: ImageButton
+    /** Viva (más nitidez y color): solo si el usuario lo prende; queda guardado. */
+    private var vividOn = false
     private lateinit var evDial: ExposureDialView
     private var dialTouching = false
     private var aeLocked = false
@@ -303,6 +306,13 @@ class MainActivity : ComponentActivity() {
             true
         }
         evDial.onChange = { ev -> setUserEv(ev, fromDial = true) }
+        vividButton = findViewById(R.id.vividButton)
+        vividOn = CameraSettings.get(this, CameraSettings.VIVID, "off") == "on"
+        vividButton.setOnClickListener {
+            tap(it)
+            closePanels()
+            setVivid(!vividOn)
+        }
         evDial.onTouchState = { touching ->
             dialTouching = touching
             main.removeCallbacks(hideDialLater)
@@ -333,6 +343,7 @@ class MainActivity : ComponentActivity() {
         timerSecs = prefs.getInt(KEY_TIMER, 0)
         gridOn = prefs.getBoolean(KEY_GRID, false)
         recorder.audio = audio
+        recorder.peek = qrPeek
         caption = prefs.getString(KEY_CAPTION, "") ?: ""
         buildModes()
         buildEffects()
@@ -417,6 +428,7 @@ class MainActivity : ComponentActivity() {
         main.postDelayed(qrScan, 1200)
         main.removeCallbacks(balanceTick)
         main.postDelayed(balanceTick, 900)
+        updatePerf()
     }
 
     // ---------- Botones de volumen = obturador (mantener = video, como el iPhone) ----------
@@ -476,6 +488,7 @@ class MainActivity : ComponentActivity() {
         clearFocusLock()
         main.removeCallbacks(qrScan)
         main.removeCallbacks(balanceTick)
+        perf?.stop()
         if (timelapsing) stopTimelapse()
         if (quickTaking) stopQuickTake()
         if (effectRecording) stopEffectRec()
@@ -939,6 +952,8 @@ class MainActivity : ComponentActivity() {
             mode == Mode.SUNSET || mode == Mode.MOON
         updateFlashIcon()
         updateEvUi()
+        updateVividUi()
+        updateRecorderLuts()
         moonPanel.visibility = if (mode == Mode.MOON) View.VISIBLE else View.GONE
         formatButton.visibility = if (photoLike) View.VISIBLE else View.GONE
         formatButton.text = CameraSettings.formatLabel(format)
@@ -1052,7 +1067,8 @@ class MainActivity : ComponentActivity() {
         }
 
         data class Seg(val id: String, val label: String, val note: String)
-        fun section(title: String, key: String, segs: List<Seg>, def: String = segs[segs.size / 2].id) {
+        // rebind = el cambio necesita volver a abrir la cámara (si no, se aplica sin cortar la vista previa)
+        fun section(title: String, key: String, segs: List<Seg>, def: String = segs[segs.size / 2].id, rebind: Boolean = true) {
             body.addView(TextView(this).apply {
                 text = title.uppercase()
                 textSize = 11.5f
@@ -1088,7 +1104,7 @@ class MainActivity : ComponentActivity() {
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
                     setOnClickListener {
                         CameraSettings.set(this@MainActivity, key, sg.id)
-                        changed = true
+                        if (rebind) changed = true
                         it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                         paint(sg.id)
                     }
@@ -1110,7 +1126,7 @@ class MainActivity : ComponentActivity() {
         section("Selfies", CameraSettings.MIRROR, listOf(
             Seg("mirror", "Como te ves", "Igual que en la pantalla, como en un espejo"),
             Seg("true", "Como te ven", "Volteada: así te ven los demás"),
-        ), def = "mirror")
+        ), def = "mirror", rebind = false)
         val zslOk = zslSupported()
         section("Disparo", CameraSettings.ZSL, listOf(
             Seg("on", "Sin retraso", if (zslOk) "La foto es del instante exacto en que apoyas el dedo"
@@ -1120,19 +1136,23 @@ class MainActivity : ComponentActivity() {
         section("Modo noche", CameraSettings.NIGHT_AUTO, listOf(
             Seg("on", "Automático", "De noche junta varias fotos y sube el brillo (sale la lunita)"),
             Seg("off", "Apagado", "Una sola foto, sin subir el brillo de más"),
-        ), def = "on")
+        ), def = "on", rebind = false)
         section("Belleza", CameraSettings.BEAUTY, listOf(
             Seg("off", "Apagada", "Piel natural: sin alisar ni retocar la cara"),
             Seg("on", "Encendida", "Usa tus ajustes de belleza (en Efectos) y alisa un poco la piel"),
-        ), def = "off")
+        ), def = "off", rebind = false)
         section("Sonido de la cámara", CameraSettings.SOUND, listOf(
             Seg("on", "Con sonido", "Clic al tomar la foto y pitido al grabar"),
             Seg("off", "En silencio", "Sin ningún sonido"),
-        ), def = "on")
+        ), def = "on", rebind = false)
         section("Mejora automática", CameraSettings.ENHANCE, listOf(
             Seg("on", "Activada", "Luces y sombras parejas, caras más claras, menos ruido y menos halo en las luces"),
             Seg("off", "Apagada", "La foto tal cual sale del sensor"),
-        ), def = "on")
+        ), def = "on", rebind = false)
+        section("Viva", CameraSettings.VIVID, listOf(
+            Seg("off", "Apagada", "La foto con la mejora normal"),
+            Seg("on", "Prendida", "Más nitidez, contraste y color. También con el botón de destellos del visor"),
+        ), def = "off", rebind = false)
         section("Video", CameraSettings.VIDEO, listOf(
             Seg("hd", "720p", "Más liviano"),
             Seg("fhd", "1080p", "Recomendado"),
@@ -1147,6 +1167,10 @@ class MainActivity : ComponentActivity() {
             Seg("720", "Fluido", "960 × 720 · recomendado"),
             Seg("960", "Alta", "1280 × 960 · puede ir más lento"),
         ), def = "720")
+        section("Rendimiento", CameraSettings.PERF, listOf(
+            Seg("off", "Oculto", "Sin panel"),
+            Seg("on", "Mostrar", "Panel arriba a la derecha: fps, demora del disparo, tiempo de guardado y memoria"),
+        ), def = "off", rebind = false)
 
         body.addView(TextView(this).apply {
             text = "Listo"
@@ -1178,13 +1202,23 @@ class MainActivity : ComponentActivity() {
             Beauty.load(this)
             val na = CameraSettings.get(this, CameraSettings.NIGHT_AUTO, "on") == "on"
             if (na != nightAuto) setNightAuto(na, announce = false)
+            val vv = CameraSettings.get(this, CameraSettings.VIVID, "off") == "on"
+            if (vv != vividOn) {
+                vividOn = vv
+                updateVividUi()
+                updateRecorderLuts()
+            }
+            recorder.mirror = lensFacing == CameraSelector.LENS_FACING_FRONT && mirrorSelfies()
             updateBeautyIcon()
             engine.refresh()
             if (beautyPanel.visibility == View.VISIBLE) buildBeautyPanel()
+            updatePerf()
             if (changed) {
                 updateResLabel()
                 bindCamera()
             }
+            // Mejora o Viva pudieron cambiar: la vista previa se pone igual de una vez
+            applyTone()
         }
         dialog.show()
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1375,21 +1409,125 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT && instantLook.fx -> InstantFx.preview(instantLook, previewView.width, previewView.height)
             else -> null
         }
-        val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT
+        val photoLike = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.INSTANT || mode == Mode.NIGHT ||
+            mode == Mode.SUNSET
         val night = nightHelp() && gainModes()
-        val tone = if (fx == null && photoLike && (Enhance.enabled(this) || night)) {
+        val auto = Enhance.enabled(this)
+        val viv = vividAmount(night)
+        // En instantánea con look de shader, el tono va debajo del look (igual que la foto:
+        // primero la mejora y Viva, después el look)
+        val toneOk = photoLike && (fx == null || mode == Mode.INSTANT) &&
+            ((auto && mode != Mode.SUNSET) || night || viv > 0f)
+        val tone = if (toneOk) {
             val g = if (night) digitalGain else 1f
             InstantFx.tonePreview(
                 gain = g,
                 // De noche casi no se levanta (la foto de noche tampoco) y, con mucho brillo,
-                // se suaviza el grano en vez de marcarlo
-                lift = if (night) Brightness.previewLift(g) else 1.1f,
-                sharp = if (night) 0.45f - 0.85f * ((g - 1.2f) / 1.8f).coerceIn(0f, 1f) else 0.45f,
+                // se suaviza el grano en vez de marcarlo. Con la mejora apagada, solo Viva.
+                lift = when {
+                    night -> Brightness.previewLift(g)
+                    auto && mode != Mode.SUNSET -> 1.1f
+                    else -> 0f
+                },
+                sharp = when {
+                    night -> 0.45f - 0.85f * ((g - 1.2f) / 1.8f).coerceIn(0f, 1f)
+                    auto && mode != Mode.SUNSET -> 0.45f
+                    else -> 0f
+                },
+                vivid = viv,
             )
         } else null
-        if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            previewView.setRenderEffect(
+                if (fx != null && tone != null) android.graphics.RenderEffect.createChainEffect(fx, tone) else fx ?: tone
+            )
+        }
         updateNightBadge()
         return fx
+    }
+
+    // ---------- Panel de rendimiento (Ajustes > Rendimiento; apagado por defecto) ----------
+
+    @Volatile private var perf: PerfMonitor? = null
+    private var perfView: TextView? = null
+
+    private fun updatePerf() {
+        val on = CameraSettings.get(this, CameraSettings.PERF, "off") == "on"
+        if (!on) {
+            perf?.stop()
+            perf = null
+            return
+        }
+        if (perf == null) {
+            val holder = evButton.parent as? FrameLayout ?: return
+            val tv = perfView ?: TextView(this).apply {
+                textSize = 10.5f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextColor(0xFFFFFFFF.toInt())
+                setLineSpacing(0f, 1.1f)
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(10).toFloat()
+                    setColor(0x99000000.toInt())
+                }
+                visibility = View.GONE
+                holder.addView(this, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.END
+                    topMargin = dp(12)
+                    marginEnd = dp(12)
+                })
+                perfView = this
+            }
+            perf = PerfMonitor(tv).apply {
+                analyzed = { recorder.analyzedFrames }
+                info = {
+                    "ZSL " + (if (zslAsked && zslSupported()) "sí" else "no") +
+                        " · Live " + (if (liveActive) "sí" else "no") +
+                        " · Viva " + (if (vividActive()) "sí" else "no")
+                }
+            }
+        }
+        perf?.start()
+    }
+
+    // ---------- Viva: más nitidez y color (botón abajo a la derecha; apagado por defecto) ----------
+
+    /** Modos donde Viva tiene efecto: los de foto (no video, efectos, visión nocturna, luna ni boomerang). */
+    private fun vividModes() = mode == Mode.PHOTO || mode == Mode.PORTRAIT || mode == Mode.NIGHT ||
+        mode == Mode.SUNSET || (mode == Mode.INSTANT && boomKind == "photo")
+
+    private fun vividActive() = vividOn && vividModes()
+
+    /** Cuánto Viva lleva la vista previa y el video del Live: de noche menos (no subir el grano). */
+    private fun vividAmount(night: Boolean = nightHelp() && gainModes()) =
+        if (!vividActive()) 0f else if (night || mode == Mode.NIGHT) 0.45f else 1f
+
+    private fun setVivid(on: Boolean) {
+        vividOn = on
+        CameraSettings.set(this, CameraSettings.VIVID, if (on) "on" else "off")
+        updateVividUi()
+        applyTone()
+        updateRecorderLuts()
+        showToast(if (on) "Viva: más nitidez y color" else "Viva apagada")
+    }
+
+    /** Destello amarillo con aro cuando está prendido, blanco cuando no (como el ±). */
+    private fun updateVividUi() {
+        if (!::vividButton.isInitialized) return
+        vividButton.isActivated = vividOn
+        vividButton.setColorFilter(if (vividOn) 0xFFFFD60A.toInt() else 0xFFFFFFFF.toInt())
+        vividButton.contentDescription = if (vividOn) "Viva prendida: toca para apagarla" else "Viva: más nitidez y color"
+        vividButton.visibility = if (vividModes()) View.VISIBLE else View.GONE
+    }
+
+    /** El video del Live y QuickTake lleva lo mismo que se ve: el brillo de noche y Viva. */
+    private fun updateRecorderLuts() {
+        if (!::vividButton.isInitialized) return
+        val g = digitalGain
+        val v = vividAmount()
+        recorder.lumaLut = if (g > 1f || v > 0f) Brightness.lumaLut(g, if (g > 1f) Brightness.previewLift(g) else 0f, v) else null
+        recorder.chromaLut = if (g > 1f || v > 0f) Brightness.chromaLut(g, v) else null
     }
 
     /**
@@ -1901,8 +2039,7 @@ class MainActivity : ComponentActivity() {
         // Cambios chiquitos no se aplican (sin parpadeo por el grano de la imagen)
         if (v != 1f && digitalGain != 1f && kotlin.math.abs(v - digitalGain) < 0.04f * digitalGain) return
         digitalGain = v
-        recorder.lumaLut = if (v > 1f) Brightness.lumaLut(v, Brightness.previewLift(v)) else null
-        recorder.chromaLut = if (v > 1f) Brightness.chromaLut(v) else null
+        updateRecorderLuts()
         applyTone()
     }
 
@@ -2389,6 +2526,7 @@ class MainActivity : ComponentActivity() {
                     request: android.hardware.camera2.CaptureRequest,
                     result: android.hardware.camera2.TotalCaptureResult,
                 ) {
+                    perf?.camFrames?.incrementAndGet()
                     val iso = result.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY) ?: return
                     val exp = result.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
                     onExposure(iso, exp)
@@ -2579,12 +2717,13 @@ class MainActivity : ComponentActivity() {
         val order = listOf(lo, 0, hi)
         val shots = ArrayList<ByteArray>()
         val currentFilter = filter
+        val vivid = vividActive()
         fun next(i: Int) {
             if (i == order.size) {
                 applyExposure()
                 busy = false
                 holdEnd(processing = true, note = "Juntando las 3 fotos…")
-                saveExecutor.execute { saveSunset(shots, currentFilter) }
+                saveExecutor.execute { saveSunset(shots, currentFilter, vivid) }
                 return
             }
             val future = try {
@@ -2609,7 +2748,7 @@ class MainActivity : ComponentActivity() {
         next(0)
     }
 
-    private fun saveSunset(shots: List<ByteArray>, f: PhotoFilter) {
+    private fun saveSunset(shots: List<ByteArray>, f: PhotoFilter, vivid: Boolean = false) {
         if (shots.isEmpty()) {
             finishSave("No se pudo tomar la foto")
             return
@@ -2619,7 +2758,7 @@ class MainActivity : ComponentActivity() {
                 // Alguna falló: queda la última, con la mejora de atardecer
                 MotionPhotoWriter.save(
                     this,
-                    MotionPhotoWriter.applyFilter(Enhance.jpeg(this, shots.last(), sunset = true), f),
+                    MotionPhotoWriter.applyFilter(Enhance.jpeg(this, shots.last(), sunset = true, vivid = vivid), f),
                     null, "_ATARDECER",
                 )
                 null
@@ -2635,7 +2774,7 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "Atardecer $rep")
                 val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                 bmp.setPixels(fused, 0, w, 0, 0, w, h)
-                Enhance.bitmap(this, bmp, sunset = true)
+                Enhance.bitmap(this, bmp, sunset = true, vivid = vivid)
                 MotionPhotoWriter.save(
                     this,
                     MotionPhotoWriter.applyFilter(Processing.encode(bmp, 95), f),
@@ -2999,6 +3138,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun processingEnd() {
+        perf?.ready()
         pendingSaves = (pendingSaves - 1).coerceAtLeast(0)
         if (pendingSaves == 0) {
             main.removeCallbacks(spinSafety)
@@ -3032,6 +3172,7 @@ class MainActivity : ComponentActivity() {
         val ic = imageCapture ?: return
         if (busy) return
         busy = true
+        perf?.pressed()
         closePanels()
 
         val live = liveActive
@@ -3042,6 +3183,8 @@ class MainActivity : ComponentActivity() {
         val currentMode = mode
         val front = lensFacing == CameraSelector.LENS_FACING_FRONT
         val currentFilter = filter
+        // Viva se decide al disparar (si se apaga mientras se procesa, esta foto igual la lleva)
+        val vivid = vividActive()
         // Con el modo noche apagado la foto se trata como una normal (sin subirla de más)
         val dark = lowLight && nightAuto
         // De noche la foto se sube igual que la vista previa (con el brillo que eligió el usuario)
@@ -3077,7 +3220,7 @@ class MainActivity : ComponentActivity() {
                     if (live) livePill.animate().alpha(0f).setDuration(200).start()
                     if (pre != null) processingStart(processingNote(currentMode))
                 }
-                saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG)
+                saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG, vivid)
             }
             if (pre == null) save()
             else pre.ready(save) {
@@ -3103,6 +3246,7 @@ class MainActivity : ComponentActivity() {
             ioExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onCaptureStarted() {
+                    perf?.captured()
                     // Respaldo por si no llega la hora exacta del sensor (watchStill)
                     if (live) recorder.markShutter(System.nanoTime() / 1000)
                     // Con LIVE no suena el clic (como en el iPhone: quedaría grabado en el audio)
@@ -3144,18 +3288,18 @@ class MainActivity : ComponentActivity() {
     /** Guarda lo que salió de la cámara según el modo (en segundo plano). */
     private fun saveFinished(
         currentMode: Mode, p: ByteArray?, c: MotionRecorder.Clip?, ex: List<ByteArray>, live: Boolean,
-        front: Boolean, currentFilter: PhotoFilter, dark: Boolean, aim: Float, maxG: Float,
+        front: Boolean, currentFilter: PhotoFilter, dark: Boolean, aim: Float, maxG: Float, vivid: Boolean = false,
     ) {
         saveExecutor.execute {
             run {
                 when (currentMode) {
-                    Mode.INSTANT -> saveInstant(p, dark, aim, maxG)
+                    Mode.INSTANT -> saveInstant(p, dark, aim, maxG, vivid)
                     Mode.PORTRAIT -> saveProcessed(p, "_RETRATO") {
-                        Processing.portrait(Enhance.jpeg(this, it, night = dark, aim = aim, maxGain = maxG), currentFilter)
+                        Processing.portrait(Enhance.jpeg(this, it, night = dark, aim = aim, maxGain = maxG, vivid = vivid), currentFilter)
                     }
                     Mode.EFFECTS -> saveEffectPhoto(p, front)
                     Mode.SUNSET -> saveProcessed(p, "_ATARDECER") {
-                        MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, sunset = true), currentFilter)
+                        MotionPhotoWriter.applyFilter(Enhance.jpeg(this, it, sunset = true, vivid = vivid), currentFilter)
                     }
                     Mode.NIGHT_VISION -> saveProcessed(p, "_NOCTURNA") {
                         val b = Processing.decode(Enhance.jpeg(this, it, night = true), 4096)
@@ -3165,11 +3309,17 @@ class MainActivity : ComponentActivity() {
                     }
                     Mode.NIGHT -> saveProcessed(p, "_NOCHE") {
                         val base = mergeNight(it, ex)
-                        if (Enhance.enabled(this)) MotionPhotoWriter.applyFilter(
-                            Enhance.jpeg(this, base, night = true, aim = aim, maxGain = maxG), currentFilter)
-                        else Processing.night(base, currentFilter)
+                        when {
+                            Enhance.enabled(this) -> MotionPhotoWriter.applyFilter(
+                                Enhance.jpeg(this, base, night = true, aim = aim, maxGain = maxG, vivid = vivid), currentFilter)
+                            // Mejora apagada con Viva: la noche simple y encima solo Viva
+                            vivid -> MotionPhotoWriter.applyFilter(Enhance.jpeg(
+                                this, Processing.night(base, PhotoFilter.ORIGINAL), night = true, vivid = true, auto = false,
+                            ), currentFilter)
+                            else -> Processing.night(base, currentFilter)
+                        }
                     }
-                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG, ex)
+                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG, ex, vivid)
                 }
             }
         }
@@ -3383,7 +3533,7 @@ class MainActivity : ComponentActivity() {
 
     private fun saveResult(
         photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false,
-        aim: Float = 0f, maxG: Float = 1f, extras: List<ByteArray> = emptyList(),
+        aim: Float = 0f, maxG: Float = 1f, extras: List<ByteArray> = emptyList(), vivid: Boolean = false,
     ) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
@@ -3395,14 +3545,15 @@ class MainActivity : ComponentActivity() {
             val xmp = mp4?.let { MotionPhotoWriter.buildXmp(it.bytes.size, it.presentationUs, f) }
             val quick = if (xmp != null) MotionPhotoWriter.insertXmp(photo, xmp) else photo
             val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
-            val improve = Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty()
+            val improve = Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty() || vivid
             // El aro de la miniatura sigue girando hasta que esté la versión final
             finishSave(if (live && clip == null) "Se guardó sin movimiento" else null, endProcessing = !improve)
             // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
             if (improve) {
                 try {
                     val base = mergeNight(photo, extras)
-                    val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG), f)
+                    val better = MotionPhotoWriter.applyFilter(
+                        Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG, vivid = vivid), f)
                     val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
                     MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
                     refreshThumbnail()
@@ -3419,14 +3570,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun saveInstant(photo: ByteArray?, dark: Boolean = false, aim: Float = 0f, maxG: Float = 1f) {
+    private fun saveInstant(photo: ByteArray?, dark: Boolean = false, aim: Float = 0f, maxG: Float = 1f, vivid: Boolean = false) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
             return
         }
         try {
             val src = Processing.decode(photo, 1600)
-            if (Enhance.enabled(this) || dark) Enhance.bitmap(this, src, night = dark, aim = aim, maxGain = maxG)
+            if (Enhance.enabled(this) || dark || vivid) Enhance.bitmap(this, src, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
             val bmp = InstantStyle.render(listOf(src), instantLook, instantShape, instantFrame, caption)
             src.recycle()
             val uri = MotionPhotoWriter.save(this, Processing.encode(bmp, 93), null, "_INSTANT")
@@ -3783,11 +3934,12 @@ class MainActivity : ComponentActivity() {
         busy = true
         filterBar.visibility = View.GONE
         val shots = ArrayList<ByteArray>()
+        val vivid = vividActive()
         fun next(i: Int) {
             if (i == 4) {
                 busy = false
                 processingStart("Armando el fotomatón…")
-                saveExecutor.execute { saveBooth(shots) }
+                saveExecutor.execute { saveBooth(shots, vivid) }
                 return
             }
             var left = if (i == 0) 3 else 2
@@ -3820,14 +3972,16 @@ class MainActivity : ComponentActivity() {
         next(0)
     }
 
-    private fun saveBooth(shots: List<ByteArray>) {
+    private fun saveBooth(shots: List<ByteArray>, vivid: Boolean = false) {
         if (shots.isEmpty()) {
             finishSave("No se pudo tomar el fotomatón")
             return
         }
         try {
             val photos = shots.map { b ->
-                Processing.decode(b, 1200).also { if (Enhance.enabled(this)) Enhance.bitmap(this, it) }
+                Processing.decode(b, 1200).also {
+                    if (Enhance.enabled(this) || vivid) Enhance.bitmap(this, it, vivid = vivid)
+                }
             }
             val bmp = InstantStyle.render(photos, instantLook, instantShape, InstantFrame.BOOTH, caption)
             photos.forEach { it.recycle() }
@@ -3919,30 +4073,90 @@ class MainActivity : ComponentActivity() {
                 .build()
         )
     }
+    /** El analizador entrega el próximo cuadro para buscar un QR (ver [qrPeek]). */
+    @Volatile private var qrWant = false
+    private var qrLastAna = -1
+    private var qrTicks = 0
+
     private val qrScan = object : Runnable {
         override fun run() {
             main.postDelayed(this, 800)
             if (qrBusy || busy || (mode != Mode.PHOTO && mode != Mode.PORTRAIT && mode != Mode.NIGHT && mode != Mode.NIGHT_VISION)) return
+            // En FOTO se lee del cuadro que ya llega para el Live: así no se le pide una copia de
+            // la pantalla a la GPU (eso frenaba la vista previa un instante cada vez)
+            val ana = recorder.analyzedFrames
+            val analysisAlive = ana != qrLastAna
+            qrLastAna = ana
+            if (mode == Mode.PHOTO && analysisAlive) {
+                qrWant = true
+                return
+            }
+            // Los demás modos no tienen análisis: copia pequeña de la pantalla, cada 1.6 s
+            if (qrTicks++ % 2 != 0) return
             val tv = findTexture(previewView) ?: return
             if (tv.width <= 0 || tv.height <= 0) return
-            val qw = 480
+            val qw = 360
             val small = try { tv.getBitmap(qw, qw * tv.height / tv.width) } catch (e: Exception) { null } ?: return
-            qrBusy = true
-            scanner.process(com.google.mlkit.vision.common.InputImage.fromBitmap(small, 0))
-                .addOnSuccessListener { codes ->
-                    val v = codes.firstOrNull()?.rawValue
-                    if (v != null) {
-                        if (v != qrValue) shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        qrValue = v
-                        val label = if (v.startsWith("http")) "Abrir " + android.net.Uri.parse(v).host else "QR: $v"
-                        qrChip.text = label
-                        qrChip.visibility = View.VISIBLE
-                        qrChip.removeCallbacks(hideQr)
-                        qrChip.postDelayed(hideQr, 2500)
-                    }
-                }
-                .addOnCompleteListener { qrBusy = false }
+            scanQr(com.google.mlkit.vision.common.InputImage.fromBitmap(small, 0))
         }
+    }
+
+    /**
+     * En el hilo del análisis: copia la luz (Y) del cuadro a la mitad de tamaño, de sobra para un
+     * QR, sin tocar el cuadro que sigue al video. El color va gris (al lector no le importa).
+     */
+    private val qrPeek: (androidx.camera.core.ImageProxy) -> Unit = peek@{ image ->
+        if (!qrWant) return@peek
+        qrWant = false
+        val plane = image.planes[0]
+        val sw = image.width / 2
+        val sh = image.height / 2
+        if (sw < 16 || sh < 16) return@peek
+        val buf = plane.buffer.duplicate()
+        val rs = plane.rowStride
+        val ps = plane.pixelStride
+        val out = ByteArray(sw * sh * 3 / 2)
+        val row = ByteArray(rs)
+        for (j in 0 until sh) {
+            val start = 2 * j * rs
+            if (start >= buf.limit()) break
+            buf.position(start)
+            val len = minOf(rs, buf.remaining())
+            buf.get(row, 0, len)
+            var o = j * sw
+            var x = 0
+            while (x < sw) {
+                val k = 2 * x * ps
+                if (k < len) out[o] = row[k]
+                o++
+                x++
+            }
+        }
+        java.util.Arrays.fill(out, sw * sh, out.size, 128.toByte())
+        val rot = image.imageInfo.rotationDegrees
+        main.post {
+            scanQr(com.google.mlkit.vision.common.InputImage.fromByteArray(
+                out, sw, sh, rot, com.google.mlkit.vision.common.InputImage.IMAGE_FORMAT_NV21))
+        }
+    }
+
+    private fun scanQr(img: com.google.mlkit.vision.common.InputImage) {
+        if (qrBusy || busy) return
+        qrBusy = true
+        scanner.process(img)
+            .addOnSuccessListener { codes ->
+                val v = codes.firstOrNull()?.rawValue
+                if (v != null) {
+                    if (v != qrValue) shutter.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    qrValue = v
+                    val label = if (v.startsWith("http")) "Abrir " + android.net.Uri.parse(v).host else "QR: $v"
+                    qrChip.text = label
+                    qrChip.visibility = View.VISIBLE
+                    qrChip.removeCallbacks(hideQr)
+                    qrChip.postDelayed(hideQr, 2500)
+                }
+            }
+            .addOnCompleteListener { qrBusy = false }
     }
     private val hideQr = Runnable { qrChip.visibility = View.GONE; qrValue = null }
 

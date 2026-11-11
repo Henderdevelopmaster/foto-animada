@@ -863,6 +863,9 @@ class ViewerActivity : ComponentActivity() {
         val item = items.getOrNull(current) ?: return
         val actions = mutableListOf<Sheet.Item>()
         if (!item.isVideo) {
+            actions += Sheet.Item("Viva", R.drawable.ic_vivid,
+                subtitle = if (item.isLive) "Copia quieta con más nitidez y color" else "Guarda una copia con más nitidez y color",
+            ) { runVivid(item) }
             actions += Sheet.Item("Texto en vivo", R.drawable.ic_text_scan, subtitle = "Copia el texto de la foto") { runOcr(item) }
             actions += Sheet.Item("Recortar sujeto", R.drawable.ic_cutout, subtitle = "Separa a la persona del fondo") { runSegmentation(item) }
         }
@@ -926,6 +929,35 @@ class ViewerActivity : ComponentActivity() {
     }
 
     // Recortar sujeto (ML Kit Subject Segmentation)
+    /** Viva sobre una foto ya tomada: guarda una copia nueva y la original queda igual. */
+    private fun runVivid(item: MediaRepo.Item) {
+        showBusy("Aplicando Viva…")
+        io.execute {
+            val saved = try {
+                val src = MediaRepo.loadFull(this, item.uri, 4096, software = true)
+                    ?: throw IllegalStateException("No se pudo abrir la foto")
+                val bmp = if (src.isMutable) src else src.copy(Bitmap.Config.ARGB_8888, true).also { src.recycle() }
+                Enhance.bitmap(this, bmp, vivid = true, auto = false)
+                val bytes = Processing.encode(bmp, 95)
+                bmp.recycle()
+                MotionPhotoWriter.save(this, bytes, null, "_VIVA")
+            } catch (e: Throwable) {
+                android.util.Log.e("Viewer", "Viva", e)
+                null
+            }
+            runOnUiThread {
+                showBusy(null)
+                if (saved == null) {
+                    say("No se pudo aplicar Viva a esta foto")
+                } else {
+                    say("Listo: copia con Viva guardada")
+                    startId = runCatching { android.content.ContentUris.parseId(saved) }.getOrDefault(startId)
+                    reload()
+                }
+            }
+        }
+    }
+
     private fun runSegmentation(item: MediaRepo.Item) {
         showBusy("Recortando sujeto…")
         io.execute {

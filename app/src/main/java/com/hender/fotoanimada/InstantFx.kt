@@ -107,35 +107,62 @@ uniform shader content;
 uniform float gain;
 uniform float lift;
 uniform float sharp;
+uniform float vivid;
 half4 main(float2 p) {
     float3 x = float3(content.eval(p).rgb);
     // Nitidez suave respecto a los 4 vecinos (con sharp negativo, suaviza el grano de noche)
     float3 n = (float3(content.eval(p + float2(1.5, 0.0)).rgb) + float3(content.eval(p - float2(1.5, 0.0)).rgb) +
                 float3(content.eval(p + float2(0.0, 1.5)).rgb) + float3(content.eval(p - float2(0.0, 1.5)).rgb)) * 0.25;
-    x = clamp(x + sharp * (x - n), 0.0, 1.0);
+    x = clamp(x + (sharp + 0.35 * vivid) * (x - n), 0.0, 1.0);
     float l = max(dot(x, float3(0.299, 0.587, 0.114)), 0.002);
     // Brillo de noche: sube lo oscuro ×gain y deja el blanco en blanco (igual que la foto)
     float y = l * gain / (1.0 + (gain - 1.0) * l);
     // Sombras levantadas (como la mejora automática), luces casi intactas
     y = y + lift * y * (1.0 - y) * (1.0 - y);
+    if (vivid > 0.0) {
+        // Viva: contraste local respecto a lo de alrededor (poquito, para no marcar halos)
+        float3 w = float3(content.eval(p + float2(9.0, 9.0)).rgb) + float3(content.eval(p + float2(-9.0, 9.0)).rgb) +
+                   float3(content.eval(p + float2(9.0, -9.0)).rgb) + float3(content.eval(p + float2(-9.0, -9.0)).rgb);
+        float lw = max(dot(w * 0.25, float3(0.299, 0.587, 0.114)), 0.002);
+        float wg = smoothstep(0.025, 0.10, lw) * (1.0 - 0.6 * smoothstep(0.55, 0.95, lw));
+        y *= pow(clamp(l / lw, 0.75, 1.33), 0.35 * vivid * wg);
+        // Curva S suave: negros más profundos, blancos más limpios
+        y = clamp(y, 0.0, 1.0);
+        y = y + 0.20 * vivid * (y * y * (3.0 - 2.0 * y) - y);
+    }
     // Mismo factor en los tres canales, sin pasarse del canal más alto (no cambia el color)
     float m = max(max(x.r, x.g), max(x.b, 0.002));
     float k = min(y / l, 1.0 / m);
-    return half4(half3(x * k), 1.0);
+    float3 o = x * k;
+    if (vivid > 0.0) {
+        // Viva: más color en lo que tiene poco; la piel casi no se toca
+        float mx = max(max(o.r, o.g), max(o.b, 0.002));
+        float mn = min(min(o.r, o.g), o.b);
+        float amt = 0.30 * vivid * (1.0 - (mx - mn) / mx);
+        if (o.r >= o.g && o.g >= o.b && o.r - o.b > 0.001) {
+            float hue = 60.0 * (o.g - o.b) / (o.r - o.b);
+            amt *= 1.0 - 0.75 * smoothstep(1.5, 10.5, hue) * (1.0 - smoothstep(39.5, 48.5, hue));
+        }
+        float ly = dot(o, float3(0.299, 0.587, 0.114));
+        o = clamp(ly + (o - ly) * (1.0 + amt), 0.0, 1.0);
+    }
+    return half4(half3(o), 1.0);
 }
 """
 
     /**
      * Vista previa con las sombras levantadas, parecida a como queda la foto
      * después de la mejora automática (las luces casi no se tocan).
+     * [vivid] > 0: Viva prendida (más nitidez, contraste y color, igual que la foto).
      */
-    fun tonePreview(gain: Float = 1f, lift: Float = 1.1f, sharp: Float = 0.45f): RenderEffect? {
+    fun tonePreview(gain: Float = 1f, lift: Float = 1.1f, sharp: Float = 0.45f, vivid: Float = 0f): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33) return null
         return try {
             val sh = (toneShader ?: RuntimeShader(TONE).also { toneShader = it }) as RuntimeShader
             sh.setFloatUniform("gain", gain)
             sh.setFloatUniform("lift", lift)
             sh.setFloatUniform("sharp", sharp)
+            sh.setFloatUniform("vivid", vivid)
             RenderEffect.createRuntimeShaderEffect(sh, "content")
         } catch (e: Throwable) {
             null

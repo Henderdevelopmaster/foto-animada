@@ -55,8 +55,13 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 ### Barra de abajo
 
 - **Zoom** (1x, 2x).
-- **±**: abre/cierra la regla de brillo (de −2 a +2). El valor queda puesto y se ve en amarillo.
-  Mantener el ± o doble toque en la regla vuelve a automático.
+- **±** (izquierda): abre/cierra la regla de brillo (de −2 a +2). El valor queda puesto y se ve
+  en amarillo. Mantener el ± o doble toque en la regla vuelve a automático.
+- **Viva** (derecha, dos destellos): prende/apaga Viva. **Apagado por defecto**; queda guardado
+  entre usos. Prendido = destellos amarillos con aro amarillo y aviso "Viva: más nitidez y
+  color"; apagado = blanco y aviso "Viva apagada". Sale en FOTO, RETRATO, NOCHE, ATARDECER e
+  INSTANTÁNEA (foto y fotomatón). No sale en VIDEO, TIME-LAPSE, EFECTOS, VISIÓN NOCTURNA, LUNA
+  ni boomerang, porque ahí no hace nada. Tocarlo cierra cualquier panel abierto.
 - **Modos**: TIME-LAPSE, VIDEO, FOTO, EFECTOS, RETRATO, NOCHE, VISIÓN NOCTURNA, ATARDECER, LUNA,
   INSTANTÁNEA.
 - **Miniatura** (izquierda): abre la galería. Mientras se procesa una foto, gira un aro.
@@ -125,6 +130,20 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
    4 fotos para quitar grano. Apagado: una sola foto, sin subir el brillo de más.
 4. Bloqueo AE/AF: congela la exposición; solo el ± la mueve.
 
+### Viva: qué hace y qué se espera
+
+| Qué | Resultado esperado |
+|---|---|
+| Vista previa | Con Viva se ve de una vez más color, más contraste y más nítido (lo mismo que llevará la foto) |
+| Foto | Más textura (hojas, nubes, pelo, ropa), cielo y verdes con más color, bordes limpios, negros más profundos |
+| Caras | La piel casi no cambia de color ni se marcan los poros (las caras se protegen) |
+| De noche | Viva va a menos de la mitad para no subir el grano |
+| Live y QuickTake | El video lleva el mismo color y contraste que la vista previa |
+| Mejora automática apagada | La foto sale tal cual del sensor y encima solo Viva |
+| Ráfaga | Sin Viva (la ráfaga es para rapidez y no lleva mejoras) |
+| Se apaga mientras se procesa | La foto que ya se tomó igual sale con Viva (se decide al disparar) |
+| Fotos viejas | En el visor de la galería, menú (⋯) > **Viva**: guarda una **copia** con Viva; la original no se toca |
+
 ## 6. Flash
 
 - **Atrás:** Apagado, Automático, Encendido, Linterna (luz fija).
@@ -134,8 +153,17 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
 ## 7. Ajustes (botón de resolución)
 
 Foto (MP), Selfies (Como te ves / Como te ven), Disparo (Sin retraso / Normal), Modo noche,
-Belleza, Sonido de la cámara, Mejora automática, Video, Live/QuickTake/time-lapse, Video con
-efectos. La hoja se desliza si no cabe y se cierra tocando fuera o con "Listo".
+Belleza, Sonido de la cámara, Mejora automática, **Viva** (igual que el botón del visor),
+Video, Live/QuickTake/time-lapse, Video con efectos y **Rendimiento**. La hoja se desliza si no
+cabe y se cierra tocando fuera o con "Listo".
+
+- Solo lo que cambia la cámara la vuelve a abrir al cerrar Ajustes (tamaño de foto, disparo,
+  video, Live, efectos). Lo demás (selfies, noche, belleza, sonido, mejora, Viva, rendimiento)
+  se aplica sin cortar la vista previa.
+- **Rendimiento** (apagado por defecto): panel arriba a la derecha con cuadros por segundo de
+  la cámara, del análisis y de la pantalla, el peor cuadro del último segundo, cuánto tarda la
+  foto desde el toque ("Disparo"), cuánto tarda en quedar lista ("Lista"), la memoria en uso y
+  si van ZSL, Live y Viva. Sirve para optimizar con números del cel de verdad.
 
 ## 8. Guardado
 
@@ -168,6 +196,10 @@ efectos. La hoja se desliza si no cabe y se cierra tocando fuera o con "Listo".
 | 8 | Video: el botón tardaba en cambiar y el sonido de fin llegaba tarde | Esperaba la confirmación de la cámara | Arreglado: cambia al tocar |
 | 9 | El aro de procesado se apagaba antes de tiempo | Se apagaba al guardar la versión rápida | Arreglado: gira hasta la versión final |
 | 10 | Tirones en la vista previa en modo FOTO | El lector de QR pedía una imagen de pantalla completa cada 0.8 s | Arreglado: imagen pequeña |
+| 11 | Tironcito cada 0.8 s en FOTO | El lector de QR le pedía a la GPU una copia de la pantalla y la vista esperaba | Arreglado: en FOTO lee del cuadro que ya llega para el Live (sin copia); en Retrato y Noche, copia pequeña cada 1.6 s |
+| 12 | Cerrar Ajustes cortaba la vista previa aunque solo cambiaras el sonido | Cualquier cambio volvía a abrir la cámara | Arreglado: solo lo que cambia la cámara la reabre |
+| 13 | El video del Live gastaba de más | 10 Mbps fijos para 1280 × 960 | Arreglado: según el tamaño (≈5 Mbps), misma nitidez |
+| 14 | En INSTANTÁNEA con look de shader la vista previa no llevaba la mejora | Se mostraba solo el look | Arreglado: mejora (y Viva) debajo del look, igual que la foto |
 
 ### Pendiente (siguiente revisión)
 
@@ -192,3 +224,9 @@ efectos. La hoja se desliza si no cabe y se cierra tocando fuera o con "Listo".
 8. Galería: miniaturas nítidas.
 9. VIDEO: el botón cambia al tocar; al parar suena de una.
 10. De noche en FOTO: "Quieto · n de 4", luego aro en la miniatura hasta la foto final.
+11. Viva: tocar los destellos (abajo a la derecha). La vista previa cambia al instante y sale
+    "Viva: más nitidez y color". Tomar la misma escena con y sin Viva y compararlas en la galería.
+12. Cerrar y abrir la app: Viva sigue como lo dejaste. Pasar a VIDEO: el botón desaparece.
+13. Galería > una foto > menú > Viva: aparece una copia nueva y la original sigue igual.
+14. Ajustes > Rendimiento > Mostrar: tomar 3 fotos y mandar captura del panel (con eso se
+    optimiza lo que de verdad está lento en tu cel).

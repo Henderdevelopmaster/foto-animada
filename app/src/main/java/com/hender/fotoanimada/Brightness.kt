@@ -111,15 +111,19 @@ object Brightness {
     /** Sombras levantadas de la vista previa (igual que en el shader). */
     fun lift(y: Float, amount: Float): Float = y + amount * y * (1f - y) * (1f - y)
 
-    /** Tabla 0..255 para la luz (Y) del video del Live: curva + levantado. */
-    fun lumaLut(g: Float, lift: Float): ByteArray = ByteArray(256) { i ->
-        val y = lift(curve(i / 255f, g), lift)
+    /**
+     * Tabla 0..255 para la luz (Y) del video del Live: curva + levantado, y con Viva ([vivid] > 0)
+     * la misma curva S suave de la vista previa y la foto.
+     */
+    fun lumaLut(g: Float, lift: Float, vivid: Float = 0f): ByteArray = ByteArray(256) { i ->
+        var y = lift(curve(i / 255f, g), lift).coerceIn(0f, 1f)
+        if (vivid > 0f) y += 0.20f * vivid * (y * y * (3f - 2f * y) - y)
         (y * 255f + 0.5f).toInt().coerceIn(0, 255).toByte()
     }
 
-    /** Tabla 0..255 para el color (U/V) del video: un poco más de color al subir la luz. */
-    fun chromaLut(g: Float): ByteArray {
-        val k = min(1f + 0.25f * (g - 1f), 1.5f)
+    /** Tabla 0..255 para el color (U/V) del video: un poco más de color al subir la luz (y con Viva). */
+    fun chromaLut(g: Float, vivid: Float = 0f): ByteArray {
+        val k = min(1f + 0.25f * (g - 1f), 1.5f) * (1f + 0.22f * vivid)
         return ByteArray(256) { i -> (128f + (i - 128) * k + 0.5f).toInt().coerceIn(0, 255).toByte() }
     }
 }

@@ -52,6 +52,17 @@ class MotionRecorder(
     @Volatile
     var mirror = false
 
+    /** Cuadros analizados en total (para el panel de rendimiento). */
+    private val analyzedCount = java.util.concurrent.atomic.AtomicInteger()
+    val analyzedFrames: Int get() = analyzedCount.get()
+
+    /**
+     * Mirada rápida a cada cuadro antes de grabarlo (en el hilo del análisis). La usa el lector
+     * de QR: así no hay que pedirle una copia de la pantalla a la GPU, que trababa la vista previa.
+     */
+    @Volatile
+    var peek: ((ImageProxy) -> Unit)? = null
+
     private var codec: MediaCodec? = null
     private var outFormat: MediaFormat? = null
     private var width = 0
@@ -141,6 +152,12 @@ class MotionRecorder(
 
     override fun analyze(image: ImageProxy) {
         try {
+            analyzedCount.incrementAndGet()
+            try {
+                peek?.invoke(image)
+            } catch (e: Exception) {
+                Log.w(TAG, "peek", e)
+            }
             if (!enabled && !longActive && !longStartReq.get()) {
                 if (buffer.isNotEmpty()) buffer.clear()
                 pending.getAndSet(null)?.invoke(null)
@@ -212,7 +229,9 @@ class MotionRecorder(
                 MediaFormat.KEY_COLOR_FORMAT,
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
             )
-            setInteger(MediaFormat.KEY_BIT_RATE, 10_000_000)
+            // Bitrate según el tamaño (antes 10 Mbps fijo): 1280×960 ≈ 5.3 Mbps, igual de nítido
+            // a 30 fps y menos trabajo para el codificador, que va prendido todo el rato con LIVE
+            setInteger(MediaFormat.KEY_BIT_RATE, (w.toLong() * h * 30 * 0.145).toInt().coerceIn(3_000_000, 9_000_000))
             setInteger(MediaFormat.KEY_FRAME_RATE, 30)
             // Un keyframe por segundo para poder cortar el buffer limpio
             // Keyframe cada medio segundo: el clip puede empezar justo 1.5 s antes de la foto

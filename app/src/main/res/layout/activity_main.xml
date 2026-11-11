@@ -261,6 +261,20 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
+        <!-- Viva: más nitidez y color. Solo si el usuario la prende (queda guardado) -->
+        <ImageButton
+            android:id="@+id/vividButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginBottom="64dp"
+            android:layout_marginEnd="18dp"
+            android:background="@drawable/bg_vivid"
+            android:contentDescription="Viva: más nitidez y color"
+            android:padding="9dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_vivid" />
+
         <com.hender.fotoanimada.ExposureDialView
             android:id="@+id/evDial"
             android:layout_width="match_parent"
