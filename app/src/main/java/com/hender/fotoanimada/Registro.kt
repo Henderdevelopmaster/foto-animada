@@ -134,11 +134,13 @@ object Registro {
         val rt = Runtime.getRuntime()
         append("Núcleos: ").append(rt.availableProcessors()).append(" · memoria máx. de la app: ")
             .append(rt.maxMemory() shr 20).append(" MB\n")
-        val pm = context.getSystemService(android.os.PowerManager::class.java)
-        val bm = context.getSystemService(android.os.BatteryManager::class.java)
+        val power = context.getSystemService(android.os.PowerManager::class.java)
+        val battery = context.getSystemService(android.os.BatteryManager::class.java)
         append("Temperatura: ").append(thermalName(thermal))
-        if (bm != null) append(" · batería ").append(bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)).append(" %")
-        if (pm?.isPowerSaveMode == true) append(" · ahorro de batería prendido")
+        if (battery != null) {
+            append(" · batería ").append(battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)).append(" %")
+        }
+        if (power?.isPowerSaveMode == true) append(" · ahorro de batería prendido")
         append('\n')
         append("Ajustes: ").append(settings).append("\n\n")
 
