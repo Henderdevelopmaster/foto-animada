@@ -2590,6 +2590,72 @@ class MainActivity : ComponentActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    // ---------- Orientación: la interfaz es vertical, pero la foto sigue al cel ----------
+
+    /** Giro del cel en grados (0, 90, 180 o 270, como OrientationEventListener). */
+    @Volatile private var deviceDegrees = 0
+
+    /** Análisis que sigue el giro (video del Live, QuickTake, time-lapse y QR). */
+    private var rotatingAnalysis: ImageAnalysis? = null
+
+    /**
+     * Antes la foto siempre salía como si el cel estuviera vertical: con el cel de lado, la foto
+     * quedaba acostada en la galería. Ahora la foto, el video y el Live salen derechos, y los
+     * íconos giran para leerse bien.
+     */
+    private val orientationListener by lazy {
+        object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return
+                val next = Orientation.snap(degrees, deviceDegrees)
+                if (next == deviceDegrees) return
+                deviceDegrees = next
+                Log.i(TAG, "Orientación: $next°")
+                applyDeviceRotation()
+            }
+        }
+    }
+
+    private var orientationWatched = false
+
+    /** El sensor de giro solo escucha mientras la cámara está en pantalla. */
+    private fun watchOrientation() {
+        if (orientationWatched) return
+        orientationWatched = true
+        lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {
+            override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
+                if (orientationListener.canDetectOrientation()) orientationListener.enable()
+            }
+
+            override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
+                orientationListener.disable()
+            }
+        })
+    }
+
+    private fun applyDeviceRotation() {
+        watchOrientation()
+        val r = Orientation.surfaceRotation(deviceDegrees)
+        imageCapture?.targetRotation = r
+        videoCapture?.targetRotation = r
+        rotatingAnalysis?.targetRotation = r
+        rotateControls()
+    }
+
+    /** Los íconos giran en su sitio (por el camino corto) para quedar derechos con el cel de lado. */
+    private fun rotateControls() {
+        if (!::flip.isInitialized) return
+        val target = -deviceDegrees.toFloat()
+        val views = listOf<View>(flip, thumbnail, flashButton, timerButton, liveToggle, filterButton, gridButton,
+            beautyButton, evButton, vividButton, zoom1, zoom2)
+        for (v in views) {
+            var t = target
+            while (t - v.rotation > 180f) t -= 360f
+            while (t - v.rotation < -180f) t += 360f
+            v.animate().rotation(t).setDuration(220).start()
+        }
+    }
+
     private fun bindCamera() {
         val provider = provider ?: return
         recorder.mirror = front && mirrorSelfies()
@@ -2607,6 +2673,9 @@ class MainActivity : ComponentActivity() {
         try {
             provider.unbindAll()
             camera = provider.bindToLifecycle(this, selector, group)
+            // El análisis de Efectos dibuja su propia vista previa: ese se queda vertical
+            rotatingAnalysis = if (mode == Mode.EFFECTS) null else group.useCases.filterIsInstance<ImageAnalysis>().firstOrNull()
+            applyDeviceRotation()
             watchCameraState()
             observeZoom()
             applySmoothFps()
