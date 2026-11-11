@@ -2672,8 +2672,10 @@ class MainActivity : ComponentActivity() {
         finishSave(msg)
     }
 
-    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
-    @androidx.annotation.OptIn(androidx.camera.core.ExperimentalZeroShutterLag::class)
+    @androidx.annotation.OptIn(
+        androidx.camera.camera2.interop.ExperimentalCamera2Interop::class,
+        androidx.camera.core.ExperimentalZeroShutterLag::class,
+    )
     private fun buildPhotoGroup(night: Boolean, analysis: Boolean): UseCaseGroup {
         videoCapture = null
         val wide = wideFormat
