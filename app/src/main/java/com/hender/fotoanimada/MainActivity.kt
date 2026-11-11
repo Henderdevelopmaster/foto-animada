@@ -1305,13 +1305,8 @@ class MainActivity : ComponentActivity() {
      */
     private fun refreshFilterThumbs() {
         if (thumbsBusy || filterList.childCount == 0) return
-        val tv = findTexture(previewView) ?: return
-        if (tv.width <= 0 || tv.height <= 0) return
-        // Lo que entrega la cámara (derecho y, con la frontal, como espejo), en chiquito
-        val ar = tv.width.toFloat() / tv.height
-        val bw = if (ar < 1f) 150 else (150 * ar).toInt()
-        val bh = if (ar < 1f) (150 / ar).toInt() else 150
-        val frame = try { tv.getBitmap(bw, bh) } catch (e: Exception) { null } ?: return
+        // Lo mismo que se ve en pantalla (derecho, espejo en la frontal), en chiquito
+        val frame = previewSnapshot(200) ?: return
         val side = minOf(frame.width, frame.height)
         val base = Bitmap.createBitmap(frame, (frame.width - side) / 2, (frame.height - side) / 2, side, side)
         if (base !== frame) frame.recycle()
@@ -1395,6 +1390,32 @@ class MainActivity : ComponentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 31) previewView.setRenderEffect(fx ?: tone)
         updateNightBadge()
         return fx
+    }
+
+    /**
+     * La vista previa tal como se ve en pantalla, en chiquito y barato: la GPU entrega el cuadro
+     * reducido y aquí se le aplican las mismas transformaciones que usa la vista (giro, espejo,
+     * recorte). Así no se pide una imagen de pantalla completa cada vez (eso trababa).
+     */
+    private fun previewSnapshot(target: Int): Bitmap? {
+        val tv = findTexture(previewView) ?: return null
+        val pw = previewView.width
+        val ph = previewView.height
+        if (tv.width <= 0 || tv.height <= 0 || pw <= 0 || ph <= 0) return null
+        val k = maxOf(pw, ph).toFloat() / target
+        val sw = (tv.width / k).toInt().coerceAtLeast(1)
+        val sh = (tv.height / k).toInt().coerceAtLeast(1)
+        val src = try { tv.getBitmap(sw, sh) } catch (e: Exception) { null } ?: return null
+        val m = android.graphics.Matrix()
+        m.setScale(tv.width.toFloat() / sw, tv.height.toFloat() / sh)
+        m.postConcat(tv.getTransform(null))
+        m.postConcat(tv.matrix)
+        m.postTranslate(tv.left.toFloat(), tv.top.toFloat())
+        m.postScale(1f / k, 1f / k)
+        val out = Bitmap.createBitmap((pw / k).toInt().coerceAtLeast(1), (ph / k).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        src.recycle()
+        return out
     }
 
     private fun findTexture(v: View): TextureView? {
@@ -3374,14 +3395,23 @@ class MainActivity : ComponentActivity() {
             val xmp = mp4?.let { MotionPhotoWriter.buildXmp(it.bytes.size, it.presentationUs, f) }
             val quick = if (xmp != null) MotionPhotoWriter.insertXmp(photo, xmp) else photo
             val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
-            finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
+            val improve = Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty()
+            // El aro de la miniatura sigue girando hasta que esté la versión final
+            finishSave(if (live && clip == null) "Se guardó sin movimiento" else null, endProcessing = !improve)
             // 2) Mejora y filtro por detrás; luego se reemplaza el mismo archivo
-            if (Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty()) {
-                val base = mergeNight(photo, extras)
-                val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG), f)
-                val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
-                MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
-                refreshThumbnail()
+            if (improve) {
+                try {
+                    val base = mergeNight(photo, extras)
+                    val better = MotionPhotoWriter.applyFilter(Enhance.jpeg(this, base, night = dark, aim = aim, maxGain = maxG), f)
+                    val final = if (xmp != null) MotionPhotoWriter.insertXmp(better, xmp) else better
+                    MotionPhotoWriter.replace(this, uri, final, mp4?.bytes)
+                    refreshThumbnail()
+                } catch (e: Throwable) {
+                    // La foto tal cual ya quedó guardada: solo no se pudo mejorar
+                    Log.e(TAG, "No se pudo mejorar la foto", e)
+                } finally {
+                    runOnUiThread { processingEnd() }
+                }
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Error guardando", e)
@@ -3968,13 +3998,14 @@ class MainActivity : ComponentActivity() {
     private fun diff(a: Int, b: Int): Int =
         abs(((a shr 16) and 255) - ((b shr 16) and 255)) + abs(((a shr 8) and 255) - ((b shr 8) and 255)) + abs((a and 255) - (b and 255))
 
-    private fun finishSave(message: String?) {
+    /** [endProcessing] = false cuando la foto ya está en la galería pero aún se está mejorando. */
+    private fun finishSave(message: String?, endProcessing: Boolean = true) {
         val thumb = roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
             ?.let { MediaRepo.thumbnail(this, it.uri, 320) })
         runOnUiThread {
             busy = false
             livePill.visibility = View.GONE
-            processingEnd()
+            if (endProcessing) processingEnd()
             message?.let { showToast(it) }
             if (thumb != null) {
                 thumbnail.setImageBitmap(thumb)
@@ -4008,7 +4039,7 @@ class MainActivity : ComponentActivity() {
     private fun refreshThumbnail() {
         ioExecutor.execute {
             val thumb = roundThumb(MediaRepo.list(this, onlyOwn = true).firstOrNull()
-                ?.let { MediaRepo.thumbnail(this, it.uri, 200) })
+                ?.let { MediaRepo.thumbnail(this, it.uri, 320) })
             runOnUiThread {
                 if (thumb != null) thumbnail.setImageBitmap(thumb) else thumbnail.setImageDrawable(null)
             }
