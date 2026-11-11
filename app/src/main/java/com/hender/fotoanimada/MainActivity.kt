@@ -1442,6 +1442,8 @@ class MainActivity : ComponentActivity() {
                 if (fx != null && tone != null) android.graphics.RenderEffect.createChainEffect(fx, tone) else fx ?: tone
             )
         }
+        // El video del Live sigue a la vista previa (de noche Viva va más suave)
+        updateRecorderLuts()
         updateNightBadge()
         return fx
     }
