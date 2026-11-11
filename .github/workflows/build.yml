@@ -3,10 +3,18 @@ name: Compilar APK
 on:
   push:
     branches: [main, dev]
+  # Los cambios de Claude y Codex en ramas aparte se revisan antes de entrar a dev
+  pull_request:
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Una compilación a la vez por rama (la prueba de dev se reemplaza sin chocar)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -47,3 +55,16 @@ jobs:
             Descarga el APK de abajo e instálalo en el celular.
           files: Camaratrix-v1.0.${{ github.run_number }}.apk
           make_latest: true
+
+      # Prueba de dev: Hender la instala desde Releases sin publicar a main. Siempre hay una
+      # sola (se reemplaza en cada push a dev), marcada como versión preliminar.
+      - name: Publicar prueba de dev
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete prueba-dev --yes --cleanup-tag || true
+          gh release create prueba-dev "Camaratrix-v1.0.${{ github.run_number }}.apk" \
+            --prerelease --target "${{ github.sha }}" \
+            --title "Prueba de dev v1.0.${{ github.run_number }} (sin publicar)" \
+            --notes "Versión de prueba con lo último de dev (Claude y Codex). La oficial es la marcada como Latest. Commit ${{ github.sha }}."
