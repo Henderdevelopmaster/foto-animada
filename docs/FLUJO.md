@@ -143,6 +143,7 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
 | Ráfaga | Sin Viva (la ráfaga es para rapidez y no lleva mejoras) |
 | Se apaga mientras se procesa | La foto que ya se tomó igual sale con Viva (se decide al disparar) |
 | Fotos viejas | En el visor de la galería, menú (⋯) > **Viva**: guarda una **copia** con Viva; la original no se toca |
+| Modo MÁX (200 MP) | Sin Viva ni mejora: la foto gigante se deja con todo su detalle |
 
 ## 6. Flash
 
@@ -162,8 +163,9 @@ cabe y se cierra tocando fuera o con "Listo".
   se aplica sin cortar la vista previa.
 - **Rendimiento** (apagado por defecto): panel arriba a la derecha con cuadros por segundo de
   la cámara, del análisis y de la pantalla, el peor cuadro del último segundo, cuánto tarda la
-  foto desde el toque ("Disparo"), cuánto tarda en quedar lista ("Lista"), la memoria en uso y
-  si van ZSL, Live y Viva. Sirve para optimizar con números del cel de verdad.
+  foto desde el toque ("Disparo"), cuánto tarda en quedar lista ("Lista"), la memoria en uso,
+  si van ZSL, Live y Viva, y si Xiaomi deja usar su procesado (HDR, Noche, Auto…) desde otras
+  apps ("Procesado Xiaomi"). Sirve para optimizar con números del cel de verdad.
 
 ## 8. Guardado
 

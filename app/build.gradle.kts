@@ -47,6 +47,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
     implementation("androidx.camera:camera-video:$camerax")
+    // Solo para revisar si el fabricante deja usar su procesado (HDR, Noche…) desde otras apps
+    implementation("androidx.camera:camera-extensions:$camerax")
     // ML Kit vía Google Play services (modelos se descargan solos, la app pesa poco)
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")

@@ -1484,7 +1484,8 @@ class MainActivity : ComponentActivity() {
                 info = {
                     "ZSL " + (if (zslAsked && zslSupported()) "sí" else "no") +
                         " · Live " + (if (liveActive) "sí" else "no") +
-                        " · Viva " + (if (vividActive()) "sí" else "no")
+                        " · Viva " + (if (vividActive()) "sí" else "no") +
+                        "\nProcesado Xiaomi: " + vendorExt
                 }
             }
         }
@@ -2426,6 +2427,46 @@ class MainActivity : ComponentActivity() {
         future.addListener({
             provider = future.get()
             bindCamera()
+            checkVendorExtensions()
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * ¿El fabricante deja usar su procesado (HDR, Noche, Auto…) desde otras apps? En muchos cels
+     * no (solo lo usa su cámara). Se revisa una vez y se ve en el panel de Rendimiento.
+     */
+    @Volatile private var vendorExt = "revisando…"
+
+    private fun checkVendorExtensions() {
+        val provider = provider ?: return
+        val f = try {
+            androidx.camera.extensions.ExtensionsManager.getInstanceAsync(this, provider)
+        } catch (e: Throwable) {
+            vendorExt = "no se pudo revisar"
+            return
+        }
+        f.addListener({
+            vendorExt = try {
+                val em = f.get()
+                val modes = listOf(
+                    androidx.camera.extensions.ExtensionMode.AUTO to "Auto",
+                    androidx.camera.extensions.ExtensionMode.HDR to "HDR",
+                    androidx.camera.extensions.ExtensionMode.NIGHT to "Noche",
+                    androidx.camera.extensions.ExtensionMode.BOKEH to "Retrato",
+                    androidx.camera.extensions.ExtensionMode.FACE_RETOUCH to "Retoque",
+                )
+                fun list(sel: CameraSelector): String {
+                    val ok = modes.filter { (m, _) ->
+                        try { em.isExtensionAvailable(sel, m) } catch (e: Throwable) { false }
+                    }.map { it.second }
+                    return if (ok.isEmpty()) "ninguna" else ok.joinToString(", ")
+                }
+                "atrás " + list(CameraSelector.DEFAULT_BACK_CAMERA) + " · frontal " + list(CameraSelector.DEFAULT_FRONT_CAMERA)
+            } catch (e: Throwable) {
+                Log.w(TAG, "Extensiones", e)
+                "no se pudo revisar"
+            }
+            Log.i(TAG, "Procesado del fabricante: $vendorExt")
         }, ContextCompat.getMainExecutor(this))
     }
 
