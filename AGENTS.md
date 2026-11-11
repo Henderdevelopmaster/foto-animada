@@ -101,9 +101,30 @@ Android, así que tienen pruebas JUnit en `app/src/test` (corren en Actions):
 Para mirar resultados a ojo se pueden compilar con `kotlinc` junto a un `main` que lea PNG/JPG
 con `javax.imageio`. Los shaders AGSL se validan con `skia-python` (`skia.RuntimeEffect.MakeForShader`).
 
+## Matriz de pruebas (revisar antes de entregar)
+
+Cada cambio se revisa en las combinaciones que toca. En el Redmi, con Ajustes > Compartir registro
+al final de cada tanda.
+
+| Qué | Trasera | Frontal | Día | Noche (lunita amarilla) | De lado |
+|---|---|---|---|---|---|
+| FOTO (toque, al apoyar, volumen, ráfaga, temporizador, flash) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FOTO con LIVE (y salir al fondo con un Live pendiente) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FOTO con Viva, filtro y formato 1:1 / 9:16 | ✓ | ✓ | ✓ | ✓ | |
+| RETRATO, NOCHE, ATARDECER | ✓ | ✓ | ✓ | ✓ | ✓ |
+| INSTANTÁNEA (foto, fotomatón, boomerang) | ✓ | ✓ | ✓ | ✓ | |
+| EFECTOS, VISIÓN NOCTURNA, LUNA | ✓ | ✓ (efectos) | ✓ | ✓ | |
+| VIDEO, TIME-LAPSE, QuickTake | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Galería y visor: abrir, Live, compartir, copia con Viva, abrir mientras gira el aro | | | | | |
+
+Para cada fila: que el aviso salga en el instante real, que el aro se apague, que la foto de la
+galería sea la que se vio (encuadre, espejo, brillo, color) y que no queden fantasmas ni morado.
+
 ## Pendientes conocidos
 
 Ver la sección de pendientes y la lista de pruebas en `docs/FLUJO.md`. Lo más importante:
 - Probar en el cel la versión nueva de noche (fantasmas, color, tiempo hasta lista).
 - Con LIVE prendido el botón queda ocupado ~1.5 s después de cada foto.
 - El video del Live de noche no lleva la corrección de color (la foto sí).
+- La foto mejorada pierde el EXIF de la cámara (fecha, modelo, exposición, ISO): copiarlo al
+  JPEG final con la orientación en 1.
