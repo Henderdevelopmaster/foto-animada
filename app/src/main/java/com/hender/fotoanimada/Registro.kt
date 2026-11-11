@@ -27,10 +27,15 @@ object Registro {
 
     @Volatile private var installed = false
 
+    /** Último estado de temperatura del cel (PowerManager.THERMAL_STATUS_*). */
+    @Volatile var thermal = 0
+        private set
+
     /** Guarda el error si la app se cierra de golpe (el registro normal se pierde al reiniciar). */
     fun install(context: Context) {
         if (installed) return
         installed = true
+        watchThermal(context.applicationContext)
         val dir = context.applicationContext.filesDir
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
@@ -44,6 +49,34 @@ object Registro {
             }
             previous?.uncaughtException(thread, error)
         }
+    }
+
+    /**
+     * El Helio G99 baja la velocidad cuando se calienta (y la vista previa, el Live y el procesado
+     * se ponen lentos sin que la app tenga la culpa). Cada cambio queda en el registro.
+     */
+    private fun watchThermal(context: Context) {
+        try {
+            val pm = context.getSystemService(android.os.PowerManager::class.java) ?: return
+            thermal = pm.currentThermalStatus
+            pm.addThermalStatusListener { status ->
+                thermal = status
+                Log.i(TAG, "Temperatura del cel: ${thermalName(status)}")
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "No se pudo vigilar la temperatura", e)
+        }
+    }
+
+    fun thermalName(status: Int): String = when (status) {
+        0 -> "normal"
+        1 -> "tibio"
+        2 -> "caliente (empieza a frenar)"
+        3 -> "muy caliente (frena)"
+        4 -> "crítica"
+        5 -> "emergencia"
+        6 -> "apagándose"
+        else -> "desconocida ($status)"
     }
 
     /** Arma el registro en segundo plano y abre el menú de compartir. */
@@ -101,6 +134,12 @@ object Registro {
         val rt = Runtime.getRuntime()
         append("Núcleos: ").append(rt.availableProcessors()).append(" · memoria máx. de la app: ")
             .append(rt.maxMemory() shr 20).append(" MB\n")
+        val pm = context.getSystemService(android.os.PowerManager::class.java)
+        val bm = context.getSystemService(android.os.BatteryManager::class.java)
+        append("Temperatura: ").append(thermalName(thermal))
+        if (bm != null) append(" · batería ").append(bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)).append(" %")
+        if (pm?.isPowerSaveMode == true) append(" · ahorro de batería prendido")
+        append('\n')
         append("Ajustes: ").append(settings).append("\n\n")
 
         val crash = File(context.filesDir, CRASH_FILE)
