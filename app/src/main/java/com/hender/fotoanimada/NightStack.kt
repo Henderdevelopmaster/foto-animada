@@ -9,8 +9,9 @@ import kotlin.math.min
  * alineadas y promediadas. Con 4 fotos el grano baja a la mitad y el detalle se queda.
  *
  * La primera foto manda: de las otras solo entra lo que coincide con ella, así lo que se
- * movió (una mano, alguien caminando) no deja fantasmas. Si una foto no alinea bien,
- * casi nada de ella entra y el resultado queda como la primera (nunca peor).
+ * movió (una mano, alguien caminando) no deja fantasmas. Si en una foto se movió mucho
+ * (el cel, la cabeza, otra escena), esa foto no entra en absoluto: mejor un poco más de
+ * grano que una cara con manchas o una doble exposición. Nunca queda peor que la primera.
  *
  * Las otras fotos se leen por filas ([Rows]) para no tener todas completas en memoria.
  */
@@ -33,6 +34,15 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
     /** Fotos que sí entraron y cuánto de cada una (0..1), para el registro. */
     val used = ArrayList<Float>()
 
+    /** Por qué se descartó o cuánto se movió cada foto (para el registro). */
+    val notes = ArrayList<String>()
+
+    private fun reject(why: String): Float {
+        used += 0f
+        notes += why
+        return 0f
+    }
+
     init {
         parallel { y0, y1 ->
             for (i in y0 * w until y1 * w) {
@@ -52,6 +62,9 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
         val fh = halfLuma(frame)
         val coarse = Bracket.alignLuma(refHalf, fh, hw, hh)
         val (dx, dy) = refine(frame, coarse.first * 2, coarse.second * 2)
+        // El cel se movió mucho entre fotos: con ese giro y esa perspectiva no hay forma de que
+        // la cara y el fondo coincidan a la vez (salían fantasmas y una costura en el borde)
+        if (abs(dx) > w * MAX_SHIFT || abs(dy) > h * MAX_SHIFT) return reject("movida $dx,$dy")
 
         // 2) Brillo y grano: de una muestra de puntos ya alineados
         var sumR = 0L
@@ -76,7 +89,7 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
             }
             y += 7
         }
-        if (samples < 1000) return 0f.also { used += it }
+        if (samples < 1000) return reject("sin muestra")
         // La cámara puede variar un poquito el brillo entre fotos: se empareja
         val k = if (sumF < 8L * samples || sumR < 8L * samples) 1f
         else (sumR.toFloat() / sumF).coerceIn(0.85f, 1.18f)
@@ -102,8 +115,9 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
         }
         // Grano medido como la diferencia típica entre las dos fotos (mediana, robusta)
         val md = median(diff, dn)
-        // Por punto solo se descarta lo que cambió mucho (líneas finas que se movieron)
-        val thrP = max(8f, 3.5f * 1.4826f * md).toInt()
+        // Por punto solo se descarta lo que cambió mucho (líneas finas que se movieron). Con tope:
+        // si toda la foto cambió, la mediana sube y antes dejaba pasar todo (doble exposición)
+        val thrP = (3.5f * 1.4826f * md).coerceIn(8f, 20f).toInt()
         val cutP = thrP + max(4, thrP / 2)
 
         // 3) Qué se movió, por bloques de 8×8: el grano se cancela al promediar y lo que
@@ -151,12 +165,39 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
         }
         val sortedB = bm.filter { it < 999f }.sorted()
         val medB = if (sortedB.isEmpty()) 0f else sortedB[sortedB.size / 2]
-        val thrB = max(2.5f, 2.5f * 1.4826f * medB)
+        // Con tope por lo mismo: el grano de un bloque de 8×8 casi se cancela, así que un
+        // cambio de más de unos pocos niveles ya es movimiento de verdad
+        val thrB = (2.5f * 1.4826f * medB).coerceIn(2.5f, 5f)
         val cutB = thrB * 2f + 2f
+        // ¿Cuánto de la foto se movió? Si es mucho (sobre todo en el centro, donde suele estar
+        // la cara), la foto no entra: mezclar solo unos pedazos dejaba la cara a parches
+        val movedAt = (thrB + cutB) * 0.5f
+        var total = 0
+        var moved = 0
+        var totalC = 0
+        var movedC = 0
+        for (by in 0 until bh) for (bx in 0 until bw) {
+            val v = bm[by * bw + bx]
+            if (v >= 999f) continue
+            val m = v > movedAt
+            total++
+            if (m) moved++
+            val cx = (bx + 0.5f) / bw
+            val cy = (by + 0.5f) / bh
+            if (cx in 0.2f..0.8f && cy in 0.15f..0.85f) {
+                totalC++
+                if (m) movedC++
+            }
+        }
+        val fracAll = if (total > 0) moved.toFloat() / total else 1f
+        val fracC = if (totalC > 0) movedC.toFloat() / totalC else fracAll
+        val info = String.format(java.util.Locale.US, "d=%d,%d k=%.2f md=%d medB=%.1f mov=%.2f centro=%.2f",
+            dx, dy, k, md, medB, fracAll, fracC)
+        if (fracAll > MAX_MOVED || fracC > MAX_MOVED_CENTER) return reject("se movió ($info)")
         // Peso por bloque (1 = igual que la referencia) y se agranda lo que se movió un bloque
         // alrededor, para que los bordes del objeto tampoco se mezclen
         val wb0 = FloatArray(bw * bh) { 1f - smoothstep(thrB, cutB, bm[it]) }
-        val wb = FloatArray(bw * bh)
+        val wb1 = FloatArray(bw * bh)
         for (by in 0 until bh) for (bx in 0 until bw) {
             var m = 1f
             for (oy in -1..1) for (ox in -1..1) {
@@ -164,7 +205,25 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
                 val xx = (bx + ox).coerceIn(0, bw - 1)
                 m = min(m, wb0[yy * bw + xx])
             }
-            wb[by * bw + bx] = m
+            wb1[by * bw + bx] = m
+        }
+        // Suavizado del mapa (sin escalones de bloque a bloque)
+        val wb = FloatArray(bw * bh)
+        for (by in 0 until bh) for (bx in 0 until bw) {
+            var acc = 0f
+            for (oy in -1..1) for (ox in -1..1) {
+                acc += wb1[(by + oy).coerceIn(0, bh - 1) * bw + (bx + ox).coerceIn(0, bw - 1)]
+            }
+            wb[by * bw + bx] = min(wb1[by * bw + bx], acc / 9f) * 0.5f + acc / 18f
+        }
+        // Borde que esta foto no alcanza a cubrir (por el corrimiento): se entra de a poco,
+        // así no queda una costura recta
+        val leftIn = max(0, -dx)
+        val rightIn = min(w, w - dx) - 1
+        val topIn = max(0, -dy)
+        val bottomIn = min(h, h - dy) - 1
+        val featherX = FloatArray(w) { x ->
+            feather(min(if (dx < 0) x - leftIn else Int.MAX_VALUE, if (dx > 0) rightIn - x else Int.MAX_VALUE))
         }
 
         // 4) Sumar lo que coincide (por filas, en paralelo)
@@ -182,7 +241,8 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
                 val by0 = fy.toInt().coerceIn(0, bh - 1)
                 val by1 = min(bh - 1, by0 + 1)
                 val ty = (fy - by0).coerceIn(0f, 1f)
-                for (bx in 0 until bw) rowW[bx] = wb[by0 * bw + bx] * (1f - ty) + wb[by1 * bw + bx] * ty
+                val fyw = feather(min(if (dy < 0) yy - topIn else Int.MAX_VALUE, if (dy > 0) bottomIn - yy else Int.MAX_VALUE))
+                for (bx in 0 until bw) rowW[bx] = (wb[by0 * bw + bx] * (1f - ty) + wb[by1 * bw + bx] * ty) * fyw
                 var i = yy * w
                 for (x in 0 until w) {
                     val sx = x + dx
@@ -191,7 +251,7 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
                         val bx0 = fx.toInt().coerceIn(0, bw - 1)
                         val bx1 = min(bw - 1, bx0 + 1)
                         val tx = (fx - bx0).coerceIn(0f, 1f)
-                        val wbl = rowW[bx0] * (1f - tx) + rowW[bx1] * tx
+                        val wbl = (rowW[bx0] * (1f - tx) + rowW[bx1] * tx) * featherX[x]
                         if (wbl > 0.02f) {
                             val d = distance(ref, i, row, sx, kf)
                             val gate = when {
@@ -220,6 +280,7 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
         }
         val share = got.sum().toFloat() / (n.toFloat() * W)
         used += share
+        notes += info
         return share
     }
 
@@ -309,6 +370,25 @@ class NightStack(private val ref: IntArray, private val w: Int, private val h: I
 
         /** Lado de los bloques para decidir qué se movió. */
         const val B = 8
+
+        /** Corrimiento máximo entre fotos (parte del ancho/alto); más es que el cel se movió. */
+        const val MAX_SHIFT = 0.035f
+
+        /** Parte de la foto que se puede haber movido; más y la foto no entra. */
+        const val MAX_MOVED = 0.30f
+
+        /** Lo mismo en el centro (donde suele estar la cara), más estricto. */
+        const val MAX_MOVED_CENTER = 0.15f
+
+        /** Píxeles para entrar de a poco donde la foto corrida no alcanza a cubrir. */
+        const val FEATHER = 64
+
+        /** Entrada de a poco a [FEATHER] píxeles del borde que la foto corrida no cubre. */
+        fun feather(e: Int): Float = when {
+            e >= FEATHER -> 1f
+            e <= 0 -> 0f
+            else -> smoothstep(0f, FEATHER.toFloat(), e.toFloat())
+        }
 
         fun smoothstep(a: Float, b: Float, v: Float): Float {
             val t = ((v - a) / (b - a)).coerceIn(0f, 1f)

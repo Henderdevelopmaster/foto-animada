@@ -108,12 +108,15 @@ uniform float gain;
 uniform float lift;
 uniform float sharp;
 uniform float vivid;
+uniform float3 wb;
 half4 main(float2 p) {
     float3 x = float3(content.eval(p).rgb);
     // Nitidez suave respecto a los 4 vecinos (con sharp negativo, suaviza el grano de noche)
     float3 n = (float3(content.eval(p + float2(1.5, 0.0)).rgb) + float3(content.eval(p - float2(1.5, 0.0)).rgb) +
                 float3(content.eval(p + float2(0.0, 1.5)).rgb) + float3(content.eval(p - float2(0.0, 1.5)).rgb)) * 0.25;
     x = clamp(x + (sharp + 0.35 * vivid) * (x - n), 0.0, 1.0);
+    // De noche: el color corregido (el sensor tira a morado), igual que la foto
+    x = clamp(x * wb, 0.0, 1.0);
     float l = max(dot(x, float3(0.299, 0.587, 0.114)), 0.002);
     // Brillo de noche: sube lo oscuro ×gain y deja el blanco en blanco (igual que la foto)
     float y = l * gain / (1.0 + (gain - 1.0) * l);
@@ -155,7 +158,10 @@ half4 main(float2 p) {
      * después de la mejora automática (las luces casi no se tocan).
      * [vivid] > 0: Viva prendida (más nitidez, contraste y color, igual que la foto).
      */
-    fun tonePreview(gain: Float = 1f, lift: Float = 1.1f, sharp: Float = 0.45f, vivid: Float = 0f): RenderEffect? {
+    fun tonePreview(
+        gain: Float = 1f, lift: Float = 1.1f, sharp: Float = 0.45f, vivid: Float = 0f,
+        wbR: Float = 1f, wbG: Float = 1f, wbB: Float = 1f,
+    ): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33) return null
         return try {
             val sh = (toneShader ?: RuntimeShader(TONE).also { toneShader = it }) as RuntimeShader
@@ -163,6 +169,7 @@ half4 main(float2 p) {
             sh.setFloatUniform("lift", lift)
             sh.setFloatUniform("sharp", sharp)
             sh.setFloatUniform("vivid", vivid)
+            sh.setFloatUniform("wb", wbR, wbG, wbB)
             RenderEffect.createRuntimeShaderEffect(sh, "content")
         } catch (e: Throwable) {
             null

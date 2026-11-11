@@ -39,7 +39,7 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 | Formato (4:3, 16:9, 1:1, Completa) | Pasa al siguiente formato | | Modos de foto |
 | LIVE | Prende/apaga el Live | | Solo FOTO |
 | Tipo (instantánea) | Abre la hoja: foto, boomerang, etc. | | Solo INSTANTÁNEA |
-| Resolución (ej. 12MP) | Abre Ajustes | | Todos |
+| Ajustes (engranaje + calidad, ej. ⚙ 12MP) | Abre Ajustes | | Todos |
 | Temporizador | 0 → 3 s → 10 s → 0 | | Todos |
 | Cuadrícula | Prende/apaga | | Todos |
 
@@ -85,7 +85,7 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 | FOTO, toque | Una foto | Al **apoyar** el dedo | Clic y parpadeo al soltar (con LIVE, solo parpadeo) |
 | FOTO, mantener | QuickTake (video) | Mientras se mantiene | Sonido de inicio/fin, contador |
 | FOTO, deslizar a la izquierda | Ráfaga (hasta 50) | Una tras otra | Clic en cada foto real, contador |
-| FOTO de noche (lunita amarilla) | Junta 4 fotos | Desde el toque, ~1 s | "Quieto · n de 4" y luego "Listo, ya puedes moverte" |
+| FOTO de noche (lunita amarilla) | Junta 4 fotos | Desde el toque, ~1 s | "Quieto · n de 4", "Listo, ya puedes moverte" y "Mejorando la foto de noche…" con el aro; la foto aparece ya lista |
 | Con flash (pantalla o LED) | Una foto | Cuando el flash ya iluminó | Pantalla blanca o LED; clic al tomarse |
 | Con temporizador | Cuenta y toma | Al terminar la cuenta | Números grandes en el centro |
 | Botón de volumen | Igual que el obturador | Al **presionar** | Igual |
@@ -129,6 +129,15 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
    sube el brillo con la misma curva en la vista previa, la foto y el video del Live, y junta
    4 fotos para quitar grano. Apagado: una sola foto, sin subir el brillo de más.
 4. Bloqueo AE/AF: congela la exposición; solo el ± la mueve.
+5. **Juntar fotos de noche sin fantasmas:** si entre una foto y otra se movió el cel (más de
+   3.5 %), la cabeza (más del 15 % del centro) o casi toda la escena (30 %), esa foto no entra.
+   Queda un poco más de grano, nunca manchas, parches ni doble exposición. Donde una foto
+   corrida no alcanza a cubrir, entra de a poco (sin costura recta en el borde).
+6. **Color de noche:** con muy poca luz el sensor de este cel tira a morado (y la pantalla a
+   azul). De noche se sube el verde y se baja el azul de más, con el mismo brillo, en la vista
+   previa y en la foto. Lo cálido (una lámpara) se respeta.
+7. **Si la foto salió clara** (flash de pantalla o llegó más luz), no se le sube el brillo de
+   noche: antes se levantaba igual y la cara quedaba lavada, casi blanca.
 
 ### Viva: qué hace y qué se espera
 
@@ -170,6 +179,8 @@ cabe y se cierra tocando fuera o con "Listo".
 ## 8. Guardado
 
 1. La foto tal cual sale de la cámara se guarda **al instante** (ya aparece en la galería).
+   **De noche no:** esa versión sale oscura, morada y con grano, así que se guarda una sola
+   vez, ya lista (el aro gira mientras tanto). Si algo falla, queda la de la cámara.
 2. Por detrás: noche (juntar fotos), mejora, filtro; luego se reemplaza el mismo archivo.
 3. El aro de la miniatura gira hasta que termina el paso 2.
 4. Si el paso 2 falla, queda la foto del paso 1 (nunca se pierde la foto).
@@ -202,6 +213,13 @@ cabe y se cierra tocando fuera o con "Listo".
 | 12 | Cerrar Ajustes cortaba la vista previa aunque solo cambiaras el sonido | Cualquier cambio volvía a abrir la cámara | Arreglado: solo lo que cambia la cámara la reabre |
 | 13 | El video del Live gastaba de más | 10 Mbps fijos para 1280 × 960 | Arreglado: según el tamaño (≈5 Mbps), misma nitidez |
 | 14 | En INSTANTÁNEA con look de shader la vista previa no llevaba la mejora | Se mostraba solo el look | Arreglado: mejora (y Viva) debajo del look, igual que la foto |
+| 15 | Noche: doble exposición (cara con pasto y una mano encima) y un rectángulo marcado | Si toda la foto cambió, el umbral de "qué se movió" subía con ella y dejaba pasar todo | Arreglado: topes al umbral; si se movió el cel, la cara o la escena, esa foto no entra |
+| 16 | Noche: manchas cafés en la nariz y la cara a parches cuadrados | Se mezclaban solo unos bloques de la cara que se había movido | Arreglado: si se movió el centro, la foto entera no entra; el mapa de mezcla va suavizado |
+| 17 | Noche: costura recta en el borde izquierdo y arriba | Donde la foto corrida no cubría quedaba solo la primera | Arreglado: entra de a poco (64 px) |
+| 18 | Selfie de noche lavada, casi blanca | Se le subía el brillo de noche aunque ya hubiera salido clara | Arreglado: solo se sube si salió oscura |
+| 19 | Fotos de noche moradas | El sensor a ISO alto tira a magenta y no se corregía | Arreglado: corrección de tinte de noche (foto y vista previa) |
+| 20 | Al compartir rápido una foto de noche salía oscura y con grano | Se compartía la versión rápida antes de que terminara la mejora | Arreglado: de noche se guarda una sola vez, ya lista |
+| 21 | No se encontraba Ajustes | El botón solo decía los MP | Arreglado: engranaje junto a los MP |
 
 ### Pendiente (siguiente revisión)
 
@@ -232,3 +250,7 @@ cabe y se cierra tocando fuera o con "Listo".
 13. Galería > una foto > menú > Viva: aparece una copia nueva y la original sigue igual.
 14. Ajustes > Rendimiento > Mostrar: tomar 3 fotos y mandar captura del panel (con eso se
     optimiza lo que de verdad está lento en tu cel).
+15. Noche (lunita amarilla), selfie: moverse a propósito durante "Quieto · n de 4". La foto
+    no debe tener fantasmas, parches ni costuras (a lo sumo un poco más de grano).
+16. Noche con la luz de la pantalla: la piel no debe salir morada.
+17. Selfie de noche con flash de pantalla: no debe salir lavada.

@@ -108,6 +108,72 @@ object Brightness {
         }
     }
 
+    /** Tinte normal de una escena con caras (la piel no es gris: tiene un poco menos verde). */
+    private const val TINT_TARGET = 0.92f
+
+    /** Azul de más respecto al verde que se deja (la luz de la pantalla es azulada). */
+    private const val BLUE_TARGET = 0.98f
+
+    /** Ganancias de color de noche: R, G y B (con el mismo brillo). */
+    class NightWb(val r: Float, val g: Float, val b: Float) {
+        val neutral get() = r == 1f && g == 1f && b == 1f
+    }
+
+    /**
+     * De noche el sensor de este cel tira a morado (le falta verde) y con la luz de la pantalla
+     * a azul: la piel sale morada. Se sube el verde (solo el tinte verde ↔ magenta) y se baja
+     * el azul que sobra. Lo cálido (una lámpara) se respeta. Se mide sin luces quemadas ni
+     * negros y sin colores muy fuertes (un letrero no manda).
+     */
+    fun nightWb(sumR: Double, sumG: Double, sumB: Double, count: Int, total: Int): NightWb {
+        if (count < total / 40 || sumG <= 0.0) return NightWb(1f, 1f, 1f)
+        val rb = (sumR + sumB) * 0.5
+        if (rb <= 0.0) return NightWb(1f, 1f, 1f)
+        val t = (sumG / rb).toFloat()
+        val gG = if (t >= TINT_TARGET) 1f else Math.pow((TINT_TARGET / t).toDouble(), 0.8).toFloat().coerceAtMost(1.25f)
+        val bg = (sumB / (sumG * gG)).toFloat()
+        val gB = if (bg <= BLUE_TARGET) 1f else Math.pow((BLUE_TARGET / bg).toDouble(), 0.6).toFloat().coerceAtLeast(0.85f)
+        // Mismo brillo: la luz no cambia, solo el color
+        val n = 1f / (0.299f + 0.587f * gG + 0.114f * gB)
+        return NightWb(n, gG * n, gB * n)
+    }
+
+    fun nightWb(px: IntArray): NightWb {
+        var r = 0.0
+        var g = 0.0
+        var b = 0.0
+        var c = 0
+        for (p in px) {
+            val pr = ((p shr 16) and 255) / 255f
+            val pg = ((p shr 8) and 255) / 255f
+            val pb = (p and 255) / 255f
+            if (tintUsable(pr, pg, pb)) {
+                r += pr; g += pg; b += pb; c++
+            }
+        }
+        return nightWb(r, g, b, c, px.size)
+    }
+
+    fun nightWb(rs: FloatArray, gs: FloatArray, bs: FloatArray): NightWb {
+        var r = 0.0
+        var g = 0.0
+        var b = 0.0
+        var c = 0
+        for (i in rs.indices) {
+            if (tintUsable(rs[i], gs[i], bs[i])) {
+                r += rs[i]; g += gs[i]; b += bs[i]; c++
+            }
+        }
+        return nightWb(r, g, b, c, rs.size)
+    }
+
+    private fun tintUsable(r: Float, g: Float, b: Float): Boolean {
+        val l = 0.299f * r + 0.587f * g + 0.114f * b
+        if (l < 0.03f || l > 0.92f) return false
+        val mx = max(r, max(g, b))
+        return (mx - min(r, min(g, b))) / mx <= 0.6f
+    }
+
     /** Sombras levantadas de la vista previa (igual que en el shader). */
     fun lift(y: Float, amount: Float): Float = y + amount * y * (1f - y) * (1f - y)
 

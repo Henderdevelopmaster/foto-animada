@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Engranaje chiquito dentro del botón de Ajustes (junto a los MP) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="13dp" android:height="13dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.2" android:fillColor="#00000000"
+        android:strokeLineJoin="round"
+        android:pathData="M12,8.8a3.2,3.2 0,1 1,0 6.4a3.2,3.2 0,1 1,0 -6.4zM10.3,2.8h3.4l0.5,2.4l1.7,0.9l2.3,-0.9l1.7,2.9l-1.8,1.6v2l1.8,1.6l-1.7,2.9l-2.3,-0.9l-1.7,0.9l-0.5,2.4h-3.4l-0.5,-2.4l-1.7,-0.9l-2.3,0.9l-1.7,-2.9l1.8,-1.6v-2l-1.8,-1.6l1.7,-2.9l2.3,0.9l1.7,-0.9z" />
+</vector>

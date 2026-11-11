@@ -136,16 +136,21 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Ajustes: engranaje + calidad actual (ej. 16MP) -->
             <TextView
                 android:id="@+id/resButton"
                 android:layout_width="wrap_content"
                 android:layout_height="26dp"
                 android:layout_marginEnd="6dp"
                 android:background="@drawable/bg_res_pill"
+                android:contentDescription="Ajustes"
+                android:drawablePadding="4dp"
+                android:drawableStart="@drawable/ic_settings_small"
                 android:gravity="center"
                 android:letterSpacing="0.05"
                 android:minWidth="52dp"
-                android:paddingHorizontal="9dp"
+                android:paddingStart="7dp"
+                android:paddingEnd="9dp"
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
                 android:textStyle="bold" />

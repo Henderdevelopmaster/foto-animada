@@ -1435,6 +1435,9 @@ class MainActivity : ComponentActivity() {
                     else -> 0f
                 },
                 vivid = viv,
+                wbR = if (night) previewWb.r else 1f,
+                wbG = if (night) previewWb.g else 1f,
+                wbB = if (night) previewWb.b else 1f,
             )
         } else null
         if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -1932,6 +1935,7 @@ class MainActivity : ComponentActivity() {
         watchDarkness(key, userEv)
         // Con bloqueo AE/AF el brillo se queda quieto (solo lo mueve el ±)
         if (gainOn && !aeLocked) updateDigitalGain(key, userEv, immediate = false)
+        updatePreviewWb(if (gainOn && nightHelp()) Brightness.nightWb(px) else null)
 
         // 2) Equilibrio de la cámara
         if (!balance || !canEv) return
@@ -2029,6 +2033,29 @@ class MainActivity : ComponentActivity() {
             applySmoothFps()
             applyPreviewFilter()
         }
+    }
+
+    /** Color de noche de la vista previa (el mismo arreglo que lleva la foto), suavizado. */
+    private var previewWb = Brightness.NightWb(1f, 1f, 1f)
+
+    private fun updatePreviewWb(target: Brightness.NightWb?) {
+        val t = target ?: Brightness.NightWb(1f, 1f, 1f)
+        var r = previewWb.r + (t.r - previewWb.r) * 0.5f
+        var g = previewWb.g + (t.g - previewWb.g) * 0.5f
+        var b = previewWb.b + (t.b - previewWb.b) * 0.5f
+        // Al salir de la noche, ya cerca de neutro, queda exacto
+        if (target == null && kotlin.math.abs(r - 1f) < 0.01f && kotlin.math.abs(g - 1f) < 0.01f &&
+            kotlin.math.abs(b - 1f) < 0.01f
+        ) {
+            r = 1f; g = 1f; b = 1f
+        }
+        val next = Brightness.NightWb(r, g, b)
+        // Cambios chiquitos no se aplican (sin parpadeo por el grano)
+        val moved = kotlin.math.abs(r - previewWb.r) > 0.008f || kotlin.math.abs(g - previewWb.g) > 0.008f ||
+            kotlin.math.abs(b - previewWb.b) > 0.008f || next.neutral != previewWb.neutral
+        if (!moved) return
+        previewWb = next
+        applyTone()
     }
 
     private fun updateDigitalGain(key: Float, userEv: Float, immediate: Boolean) {
@@ -3190,9 +3217,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Aviso para los modos que tardan en procesar. */
-    private fun processingNote(m: Mode): String? = when (m) {
-        Mode.PORTRAIT -> "Procesando retrato…"
-        Mode.NIGHT -> "Juntando las fotos de noche…"
+    private fun processingNote(m: Mode, dark: Boolean = false): String? = when {
+        m == Mode.PORTRAIT -> "Procesando retrato…"
+        m == Mode.NIGHT -> "Juntando las fotos de noche…"
+        dark && (m == Mode.PHOTO || m == Mode.INSTANT) -> "Mejorando la foto de noche…"
         else -> null
     }
 
@@ -3261,7 +3289,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     busy = false
                     if (live) livePill.animate().alpha(0f).setDuration(200).start()
-                    if (pre != null) processingStart(processingNote(currentMode))
+                    if (pre != null) processingStart(processingNote(currentMode, dark))
                 }
                 saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG, vivid)
             }
@@ -3307,12 +3335,12 @@ class MainActivity : ComponentActivity() {
                             grabBurst(burst) { list ->
                                 synchronized(lock) { extras = list }
                                 // Ya se puede mover: lo que sigue es procesar
-                                holdEnd(processing = true, note = processingNote(currentMode))
+                                holdEnd(processing = true, note = processingNote(currentMode, dark))
                                 finishOne()
                             }
                         }
                     } else {
-                        if (pre == null) main.post { holdEnd(processing = true, note = processingNote(currentMode)) }
+                        if (pre == null) main.post { holdEnd(processing = true, note = processingNote(currentMode, dark)) }
                         finishOne()
                     }
                 }
@@ -3536,42 +3564,49 @@ class MainActivity : ComponentActivity() {
      * Junta la foto con las extras (alineadas y promediadas, sin fantasmas). Si algo falla
      * o no hay extras, devuelve la foto tal cual.
      */
+    /** Foto gigante (modo MÁX): se deja con todo su detalle, sin juntar ni mejorar. */
+    private fun isHuge(jpeg: ByteArray): Boolean {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, o)
+        return o.outWidth.toLong() * o.outHeight > 17_000_000L
+    }
+
     private fun mergeNight(photo: ByteArray, extras: List<ByteArray>): ByteArray {
-        if (extras.isEmpty()) return photo
-        return try {
-            val t0 = System.currentTimeMillis()
-            // Con poca memoria se junta un poco más pequeña (igual queda mejor que con grano)
-            val maxSide = if (Runtime.getRuntime().maxMemory() >= 400L * 1024 * 1024) 8192 else 3000
-            val refBmp = Processing.decode(photo, maxSide)
-            val w = refBmp.width
-            val h = refBmp.height
-            if (w.toLong() * h > 17_000_000L) {
-                refBmp.recycle()
-                return photo
+        if (extras.isEmpty() || isHuge(photo)) return photo
+        val bmp = mergeNightBitmap(photo, extras) ?: return photo
+        return Processing.encode(bmp, 97).also { bmp.recycle() }
+    }
+
+    /**
+     * Junta las fotos de noche y devuelve la imagen (mutable, lista para mejorar), o null si no se
+     * pudo. Tope de 4096 px: la frontal de 16 MP queda en 12 MP (a ISO 6000 no hay más detalle
+     * de verdad) y tarda bastante menos en un cel como este.
+     */
+    private fun mergeNightBitmap(photo: ByteArray, extras: List<ByteArray>): Bitmap? = if (extras.isEmpty()) null else try {
+        val t0 = System.currentTimeMillis()
+        // Con poca memoria se junta un poco más pequeña (igual queda mejor que con grano)
+        val maxSide = if (Runtime.getRuntime().maxMemory() >= 400L * 1024 * 1024) 4096 else 3000
+        val refBmp = Processing.decode(photo, maxSide)
+        val w = refBmp.width
+        val h = refBmp.height
+        val ref = IntArray(w * h)
+        refBmp.getPixels(ref, 0, w, 0, 0, w, h)
+        refBmp.recycle()
+        val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+        val st = NightStack(ref, w, h, threads)
+        for (b in extras) {
+            val bmp = Processing.decode(b, maxSide)
+            if (bmp.width == w && bmp.height == h) {
+                st.add { y, row -> bmp.getPixels(row, 0, w, 0, y, w, 1) }
             }
-            val ref = IntArray(w * h)
-            refBmp.getPixels(ref, 0, w, 0, 0, w, h)
-            refBmp.recycle()
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
-            val out = run {
-                val st = NightStack(ref, w, h, threads)
-                for (b in extras) {
-                    val bmp = Processing.decode(b, maxSide)
-                    if (bmp.width == w && bmp.height == h) {
-                        st.add { y, row -> bmp.getPixels(row, 0, w, 0, y, w, 1) }
-                    }
-                    bmp.recycle()
-                }
-                Log.d(TAG, "Noche: ${extras.size + 1} fotos, usado ${st.used}, ${System.currentTimeMillis() - t0} ms")
-                st.result()
-            }
-            val res = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            res.setPixels(out, 0, w, 0, 0, w, h)
-            Processing.encode(res, 97).also { res.recycle() }
-        } catch (e: Throwable) {
-            Log.e(TAG, "No se pudieron juntar las fotos de noche", e)
-            photo
+            bmp.recycle()
         }
+        val out = st.result()
+        Log.d(TAG, "Noche: ${extras.size + 1} fotos, usado ${st.used} ${st.notes}, ${System.currentTimeMillis() - t0} ms")
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(out, 0, w, 0, 0, w, h) }
+    } catch (e: Throwable) {
+        Log.e(TAG, "No se pudieron juntar las fotos de noche", e)
+        null
     }
 
     private fun saveResult(
@@ -3583,9 +3618,25 @@ class MainActivity : ComponentActivity() {
             return
         }
         try {
-            // 1) La foto tal cual sale de la cámara: aparece en la galería en seguida
             val mp4 = clip?.let { MotionPhotoWriter.muxToMp4(it, cacheDir) }
             val xmp = mp4?.let { MotionPhotoWriter.buildXmp(it.bytes.size, it.presentationUs, f) }
+            // De noche la foto tal cual sale oscura, morada y con grano: no se muestra (si alguien
+            // la abría o la compartía antes de tiempo, se llevaba esa). Se guarda una vez, ya lista.
+            if (dark || extras.isNotEmpty()) {
+                val final = if (isHuge(photo)) photo else try {
+                    var bmp = mergeNightBitmap(photo, extras) ?: Processing.decode(photo, 4096)
+                    bmp = Enhance.bitmap(this, bmp, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
+                    MotionPhotoWriter.applyFilter(Processing.encode(bmp, 95).also { bmp.recycle() }, f)
+                } catch (e: Throwable) {
+                    // Si algo falla queda la de la cámara: la foto nunca se pierde
+                    Log.e(TAG, "No se pudo mejorar la foto de noche", e)
+                    photo
+                }
+                MotionPhotoWriter.save(this, if (xmp != null) MotionPhotoWriter.insertXmp(final, xmp) else final, mp4?.bytes)
+                finishSave(if (live && clip == null) "Se guardó sin movimiento" else null)
+                return
+            }
+            // 1) La foto tal cual sale de la cámara: aparece en la galería en seguida
             val quick = if (xmp != null) MotionPhotoWriter.insertXmp(photo, xmp) else photo
             val uri = MotionPhotoWriter.save(this, quick, mp4?.bytes)
             val improve = Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || dark || extras.isNotEmpty() || vivid

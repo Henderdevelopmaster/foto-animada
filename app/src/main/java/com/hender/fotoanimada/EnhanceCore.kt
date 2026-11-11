@@ -47,11 +47,11 @@ object EnhanceCore {
     class Report(
         val exposure: Float, val compress: Float, val glare: Float,
         val noise: Float, val faceBoost: Float, val wbR: Float, val wbB: Float,
-        val gain: Float = 1f,
+        val gain: Float = 1f, val wbG: Float = 1f,
     ) {
         override fun toString() = String.format(
-            java.util.Locale.US, "gain=%.2f exp=%.2f comp=%.2f glare=%.2f noise=%.4f face=%.2f wb=%.3f/%.3f",
-            gain, exposure, compress, glare, noise, faceBoost, wbR, wbB,
+            java.util.Locale.US, "gain=%.2f exp=%.2f comp=%.2f glare=%.2f noise=%.4f face=%.2f wb=%.3f/%.3f/%.3f",
+            gain, exposure, compress, glare, noise, faceBoost, wbR, wbG, wbB,
         )
     }
 
@@ -64,9 +64,13 @@ object EnhanceCore {
         // ---- 0) De noche, si la cámara no llegó: subir con la curva de la vista previa ----
         var gainUsed = 1f
         if (o.aim > 0f) {
-            val g0 = Brightness.gain(Brightness.key(s0.r, s0.g, s0.b, s0.w, s0.h), o.aim, max(1f, o.maxGain))
-            // Lo que la vista previa levanta de más respecto a la mejora de noche (igual que allá)
-            val extra = Brightness.previewLift(g0) - Brightness.NIGHT_LIFT
+            val key0 = Brightness.key(s0.r, s0.g, s0.b, s0.w, s0.h)
+            val g0 = Brightness.gain(key0, o.aim, max(1f, o.maxGain))
+            // Lo que la vista previa levanta de más respecto a la mejora de noche (igual que allá),
+            // solo si la foto salió oscura. Si ya salió clara (flash de pantalla, o llegó más luz),
+            // se deja como está: antes se levantaba igual y la cara quedaba lavada, casi blanca
+            val need = smooth(o.aim * 1.05f, o.aim * 0.6f, key0)
+            val extra = (Brightness.previewLift(g0) - Brightness.NIGHT_LIFT) * need
             if (g0 > 1.03f || extra > 0.02f) {
                 val tn = o.threads.coerceIn(1, 8)
                 val rws = (h + tn - 1) / tn
@@ -288,6 +292,13 @@ object EnhanceCore {
         // Toque cálido muy leve (piel más bonita, como el iPhone)
         wbR *= 1f + 0.012f * min(k, 1f)
         wbB *= 1f - 0.012f * min(k, 1f)
+        // De noche el sensor tira a morado (y la pantalla a azul): más verde y menos azul, con el
+        // mismo brillo, así la piel no sale morada
+        val nwb = if (o.night && k > 0f) Brightness.nightWb(s.r, s.g, s.b) else Brightness.NightWb(1f, 1f, 1f)
+        val kn = min(k, 1f)
+        val nR = 1f + (nwb.r - 1f) * kn
+        val wbG = 1f + (nwb.g - 1f) * kn
+        val nB = 1f + (nwb.b - 1f) * kn
         val vibrance = (if (o.night) 0.10f else if (sunsetLike) 0.26f else 0.20f) * min(k, 1f)
         val vibExtra = VIBRANCE * vn
         // Viva: curva S suave (negros más profundos, blancos más limpios)
@@ -392,8 +403,9 @@ object EnhanceCore {
                         b = yy + cbv
                         g = (yy - 0.299f * r - 0.114f * b) / 0.587f
                         // 4) color
-                        r *= wbR
-                        b *= wbB
+                        r *= wbR * nR
+                        g *= wbG
+                        b *= wbB * nB
                         val mx = max(r, max(g, b))
                         val mn = min(r, min(g, b))
                         if (mx > 1e-3f) {
@@ -429,7 +441,7 @@ object EnhanceCore {
             }.also { it.start() }
         }
         workers.forEach { it.join() }
-        return Report(exposure, compress, glareAmp * glareStrength, noise, faceBoost, wbR, wbB, gainUsed)
+        return Report(exposure, compress, glareAmp * glareStrength, noise, faceBoost, wbR, wbB, gainUsed, wbG)
     }
 
     // ---------------------------------------------------------------- Viva
