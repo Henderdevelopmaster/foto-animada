@@ -235,8 +235,9 @@ cabe y se cierra tocando fuera o con "Listo".
 
 - Con LIVE prendido, la cámara queda ocupada ~1.5 s después de cada foto (espera el final del
   video). Para fotos seguidas con LIVE hay que permitir varios videos a la vez.
-- Probar salida al fondo con un Live pendiente. El grabador necesita cuadros nuevos para
-  completar la solicitud. La recuperación por tiempo real queda pendiente.
+- Si LIVE sigue esperando cuadros 4 segundos después del disparo, o si se sale de la cámara
+  con una foto confirmada y el clip pendiente, se guarda el JPEG cuando está disponible.
+  Falta comprobar en el Redmi el regreso del fondo durante una captura.
 - Proteger las ediciones de portada Live y las ediciones en el mismo archivo del visor si falla
   la escritura. Revisar también los respaldos al fallar INSTANTÁNEA, EFECTOS, ATARDECER y LUNA.
 - Extensiones del fabricante: «Procesado Xiaomi» consulta disponibilidad por lente. Falta probar
@@ -281,3 +282,5 @@ cabe y se cierra tocando fuera o con "Listo".
 21. Probar en Ajustes > Rendimiento > Mostrar y compartir el registro. Anotar Android y HyperOS,
     lente y modos que aparecen en «Procesado Xiaomi». Para validar un candidato hace falta
     probar Preview + ImageCapture y después comprobar ImageAnalysis, QR y LIVE por separado.
+22. Disparar con LIVE y salir al inicio del cel antes de que termine el clip. Volver y comprobar
+    que quede una foto legible, se cierre el aviso LIVE y funcione el siguiente disparo.

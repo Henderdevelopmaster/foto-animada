@@ -483,6 +483,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         dropPreShot()
+        liveClipDeadline?.run()
         hideFilterBar()
         main.removeCallbacks(volLongPress)
         volHeld = false
@@ -3307,6 +3308,8 @@ class MainActivity : ComponentActivity() {
         } else doTakeStill()
     }
 
+    private var liveClipDeadline: Runnable? = null
+
     private fun doTakeStill(screenLit: Boolean = false, pre: PreShot? = null) {
         val ic = imageCapture ?: return
         if (busy) return
@@ -3376,10 +3379,18 @@ class MainActivity : ComponentActivity() {
         }
 
         if (live) {
-            recorder.requestClip(waitForMark = true) { result ->
+            lateinit var request: MotionRecorder.ClipRequest
+            val deadline = Runnable { request.cancel() }
+            request = recorder.requestClip(waitForMark = true) { result ->
+                main.post {
+                    main.removeCallbacks(deadline)
+                    if (liveClipDeadline === deadline) liveClipDeadline = null
+                }
                 synchronized(lock) { clip = result }
                 finishOne()
             }
+            liveClipDeadline = deadline
+            main.postDelayed(deadline, 4_000L)
         }
 
         val photoFile = File(cacheDir, "photo_${System.nanoTime()}.jpg")

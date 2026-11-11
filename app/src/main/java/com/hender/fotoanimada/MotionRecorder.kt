@@ -33,6 +33,17 @@ class MotionRecorder(
         val audio: AudioRingRecorder.Snapshot?,
     )
 
+    internal class ClipRequest(val waitForMark: Boolean, onReady: (Clip?) -> Unit) {
+        private val callback = AtomicReference<((Clip?) -> Unit)?>(onReady)
+        val isComplete: Boolean get() = callback.get() == null
+
+        fun complete(clip: Clip?) {
+            callback.getAndSet(null)?.invoke(clip)
+        }
+
+        fun cancel() = complete(null)
+    }
+
     /** Si es false no se graba nada (modo foto normal, ahorra batería). */
     @Volatile
     var enabled = true
@@ -73,8 +84,8 @@ class MotionRecorder(
     private var cropY = 0
 
     private val buffer = ArrayDeque<Sample>()
-    private val pending = AtomicReference<((Clip?) -> Unit)?>(null)
-    private var activeRequest: ((Clip?) -> Unit)? = null
+    private val pending = AtomicReference<ClipRequest?>(null)
+    private var activeRequest: ClipRequest? = null
 
     // Grabación larga (QuickTake)
     private val longStartReq = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -100,8 +111,6 @@ class MotionRecorder(
     /** Pide un clip. El callback llega en el hilo del analizador. */
     // Momento exacto en que la cámara expuso la foto (llega un poco después del toque)
     private val shutterMark = java.util.concurrent.atomic.AtomicLong(-1)
-    @Volatile
-    private var waitMarkNext = false
     private var waitingMark = false
     private var requestAtPts = 0L
 
@@ -109,11 +118,12 @@ class MotionRecorder(
      * Pide un clip. Si waitForMark = true, el centro del clip será el instante que llegue
      * por markShutter() (cuando la cámara realmente toma la foto), no el momento del toque.
      */
-    fun requestClip(waitForMark: Boolean = false, onReady: (Clip?) -> Unit) {
+    internal fun requestClip(waitForMark: Boolean = false, onReady: (Clip?) -> Unit): ClipRequest {
         markPrecise.set(false)
         shutterMark.set(-1)
-        waitMarkNext = waitForMark
-        pending.getAndSet(onReady)?.invoke(null)
+        val request = ClipRequest(waitForMark, onReady)
+        pending.getAndSet(request)?.cancel()
+        return request
     }
 
     /** Ya llegó la hora exacta del sensor para esta foto: la aproximada no la pisa. */
@@ -160,8 +170,8 @@ class MotionRecorder(
             }
             if (!enabled && !longActive && !longStartReq.get()) {
                 if (buffer.isNotEmpty()) buffer.clear()
-                pending.getAndSet(null)?.invoke(null)
-                activeRequest?.invoke(null)
+                pending.getAndSet(null)?.cancel()
+                activeRequest?.cancel()
                 activeRequest = null
                 return
             }
@@ -214,8 +224,8 @@ class MotionRecorder(
         codec = null
         outFormat = null
         buffer.clear()
-        pending.getAndSet(null)?.invoke(null)
-        activeRequest?.invoke(null)
+        pending.getAndSet(null)?.cancel()
+        activeRequest?.cancel()
         activeRequest = null
     }
 
@@ -321,14 +331,18 @@ class MotionRecorder(
                 }
             }
         }
-        pending.getAndSet(null)?.let { req ->
+        if (activeRequest?.isComplete == true) {
+            activeRequest = null
+            if (!longActive) trim()
+        }
+        pending.getAndSet(null)?.takeUnless { it.isComplete }?.let { req ->
             if (activeRequest != null) {
-                req(null)
+                req.cancel()
             } else {
                 activeRequest = req
                 shutterPtsUs = buffer.lastOrNull()?.ptsUs ?: -1L
                 requestAtPts = shutterPtsUs
-                waitingMark = waitMarkNext
+                waitingMark = req.waitForMark
             }
         }
         val req = activeRequest ?: return
@@ -350,10 +364,10 @@ class MotionRecorder(
             activeRequest = null
             if (!longActive) trim()
             if (fmt == null || samples.isEmpty()) {
-                req(null)
+                req.cancel()
             } else {
                 val a = audio?.snapshot(samples.first().ptsUs, samples.last().ptsUs)
-                req(Clip(fmt, samples, shutterPtsUs, rotation, a))
+                req.complete(Clip(fmt, samples, shutterPtsUs, rotation, a))
             }
         }
     }
