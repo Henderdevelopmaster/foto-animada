@@ -65,6 +65,9 @@ object Sheet {
 
     private fun show(a: Activity, dialog: Dialog, root: View) {
         dialog.setContentView(root)
+        // Tocar fuera (por ejemplo, el mismo botón que lo abrió) lo cierra
+        dialog.setCancelable(true)
+        dialog.setCanceledOnTouchOutside(true)
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setGravity(Gravity.BOTTOM)

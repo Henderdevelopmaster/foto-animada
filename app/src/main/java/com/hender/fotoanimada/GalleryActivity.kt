@@ -268,7 +268,9 @@ class GalleryActivity : ComponentActivity() {
             holder.boundId = item.id
             holder.thumb.setImageDrawable(null)
             io.execute {
-                val bmp = MediaRepo.thumbnail(this@GalleryActivity, item.uri, 256)
+                // La miniatura cabe DENTRO del tamaño pedido: con 256 el lado corto quedaba más
+                // chico que la casilla y se estiraba (borrosa). Se pide más grande que la casilla.
+                val bmp = MediaRepo.thumbnail(this@GalleryActivity, item.uri, maxOf(256, cell * 3 / 2))
                 runOnUiThread { if (holder.boundId == item.id) holder.thumb.setImageBitmap(bmp) }
             }
         }

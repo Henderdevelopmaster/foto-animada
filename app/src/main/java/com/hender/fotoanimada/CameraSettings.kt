@@ -55,6 +55,9 @@ object CameraSettings {
     /** Modo noche automático (lunita): "on" = junta varias fotos y sube el brillo de noche. */
     const val NIGHT_AUTO = "night_auto"
 
+    /** Disparo sin retraso (ZSL): "on" = la foto es del instante en que tocas. */
+    const val ZSL = "zsl"
+
     /** Formato de la foto: 4:3, 16:9, 1:1 o pantalla completa. */
     val formats = listOf("4:3", "16:9", "1:1", "full")
     fun format(c: Context) = get(c, FORMAT, "4:3").let { if (it in formats) it else "4:3" }

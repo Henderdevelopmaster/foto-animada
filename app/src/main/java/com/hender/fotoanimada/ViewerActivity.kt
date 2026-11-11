@@ -384,7 +384,8 @@ class ViewerActivity : ComponentActivity() {
         frames?.takeIf { framesId == item.id }?.let { onReady(it); return }
         io.execute {
             val file = MotionPhotoWriter.extractVideo(this, item.uri, videoFile(item))
-            val f = file?.let { Frames.load(it, maxSide = 540, maxFrames = 45) }
+            // Más nítido y más fluido que antes (540 px a 15 cuadros/s se veía borroso y a saltos)
+            val f = file?.let { Frames.load(it, maxSide = 900, maxFrames = 60) }
             runOnUiThread {
                 if (items.getOrNull(current)?.id == item.id && f != null) {
                     activeHolder?.animator?.stop()
@@ -1236,7 +1237,7 @@ class ViewerActivity : ComponentActivity() {
             holder.boundId = item.id
             holder.thumb.setImageDrawable(null)
             io.execute {
-                val bmp = MediaRepo.thumbnail(this@ViewerActivity, item.uri, 160)
+                val bmp = MediaRepo.thumbnail(this@ViewerActivity, item.uri, 240)
                 runOnUiThread { if (holder.boundId == item.id) holder.thumb.setImageBitmap(bmp) }
             }
         }

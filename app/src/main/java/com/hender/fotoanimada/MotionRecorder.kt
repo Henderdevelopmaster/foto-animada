@@ -99,13 +99,45 @@ class MotionRecorder(
      * por markShutter() (cuando la cámara realmente toma la foto), no el momento del toque.
      */
     fun requestClip(waitForMark: Boolean = false, onReady: (Clip?) -> Unit) {
+        markPrecise.set(false)
         shutterMark.set(-1)
         waitMarkNext = waitForMark
         pending.getAndSet(onReady)?.invoke(null)
     }
 
-    /** La cámara empezó a exponer la foto ahora (reloj System.nanoTime / 1000). */
-    fun markShutter(ptsUs: Long) = shutterMark.set(ptsUs)
+    /** Ya llegó la hora exacta del sensor para esta foto: la aproximada no la pisa. */
+    private val markPrecise = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Aproximado: la cámara avisó que empezó la foto ahora (reloj System.nanoTime / 1000). */
+    fun markShutter(ptsUs: Long) {
+        if (!markPrecise.get()) shutterMark.set(ptsUs)
+    }
+
+    /**
+     * Exacto: la hora del sensor en que se expuso la foto (la misma con la que se marcan los
+     * cuadros del video). Así el Live queda centrado en el mismo instante que la foto.
+     */
+    fun markShutterSensor(sensorNs: Long) {
+        shutterMark.set(localNs(sensorNs) / 1000)
+        markPrecise.set(true)
+    }
+
+    /**
+     * Pasa la hora del sensor al reloj del video y del audio (System.nanoTime). Según el cel,
+     * el sensor cuenta con el reloj normal o con el que incluye el tiempo dormido: se prueba
+     * cuál da un retraso creíble (la foto/cuadro es de hace un momento, no del futuro).
+     */
+    private fun localNs(sensorNs: Long): Long {
+        val mono = System.nanoTime()
+        val boot = android.os.SystemClock.elapsedRealtimeNanos()
+        val dMono = mono - sensorNs
+        val dBoot = boot - sensorNs
+        return when {
+            dMono in -20_000_000L..2_000_000_000L -> sensorNs
+            dBoot in -20_000_000L..2_000_000_000L -> sensorNs - (boot - mono)
+            else -> mono - 70_000_000L
+        }
+    }
 
     override fun analyze(image: ImageProxy) {
         try {
@@ -125,8 +157,10 @@ class MotionRecorder(
             cropX = (crop.left + (crop.width() - cw) / 2) and 1.inv()
             cropY = (crop.top + (crop.height() - ch) / 2) and 1.inv()
             val enc = ensureEncoder(cw, ch)
-            // Mismo reloj que el audio (System.nanoTime)
-            var ptsUs = System.nanoTime() / 1000
+            // Hora real del cuadro (cuando el sensor lo tomó), en el mismo reloj que el audio.
+            // Antes se usaba la hora en que llegaba aquí (≈0.1 s tarde): el video del Live
+            // quedaba corrido respecto a la foto
+            var ptsUs = localNs(image.imageInfo.timestamp) / 1000
             val step = timelapseStep
             if (step > 0 && (longActive || longStartReq.get())) {
                 frameCounter++
