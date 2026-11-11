@@ -162,6 +162,7 @@ class MainActivity : ComponentActivity() {
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var recording: Recording? = null
+    private var videoStopping = false
     private var camera: Camera? = null
     private var provider: ProcessCameraProvider? = null
     private var lensFacing = CameraSelector.LENS_FACING_BACK
@@ -377,6 +378,7 @@ class MainActivity : ComponentActivity() {
             tap(it)
         }
         timerButton.setOnClickListener {
+            cancelCountdown()
             timerSecs = when (timerSecs) { 0 -> 3; 3 -> 10; else -> 0 }
             prefs.edit().putInt(KEY_TIMER, timerSecs).apply()
             tap(it)
@@ -395,6 +397,7 @@ class MainActivity : ComponentActivity() {
         findViewById<View>(R.id.resultSend).setOnClickListener { sendResult() }
         flip.setOnClickListener {
             if (busy || recording != null) return@setOnClickListener
+            cancelCountdown()
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK)
                 CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
             it.animate().rotationBy(180f).setDuration(300).start()
@@ -498,7 +501,7 @@ class MainActivity : ComponentActivity() {
         stopReveal()
         ringLight.visibility = View.GONE
         cancelCountdown()
-        recording?.stop()
+        if (!videoStopping) recording?.stop()
         audio.stop()
     }
 
@@ -515,6 +518,7 @@ class MainActivity : ComponentActivity() {
 
     private fun setMode(m: Mode) {
         if (mode == m || busy || recording != null || quickTaking || timelapsing) return
+        cancelCountdown()
         val old = mode
         val rebind = groupOf(old) != groupOf(m) || aspectOf(old) != aspectOf(m) ||
             (m == Mode.EFFECTS && lensFacing != CameraSelector.LENS_FACING_FRONT)
@@ -883,8 +887,12 @@ class MainActivity : ComponentActivity() {
 
     private fun saveEffectPhoto(photo: ByteArray?, front: Boolean) {
         val fx = engine.effect
-        if (photo == null || fx == null) {
-            finishSave(if (photo == null) "No se pudo tomar la foto" else null)
+        if (photo == null) {
+            finishSave("No se pudo tomar la foto")
+            return
+        }
+        if (fx == null) {
+            finishSave(saveOriginalPhoto(photo))
             return
         }
         val msg = try {
@@ -902,7 +910,7 @@ class MainActivity : ComponentActivity() {
             null
         } catch (e: Throwable) {
             Log.e(TAG, "Foto con efecto", e)
-            "Error: ${e.message}"
+            saveOriginalPhoto(photo)
         }
         finishSave(msg)
     }
@@ -949,6 +957,7 @@ class MainActivity : ComponentActivity() {
         }
         centerMode()
         updateResLabel()
+        updateShutterDescription()
         layoutPreview()
         val photoLike = mode == Mode.PHOTO || mode == Mode.NIGHT || mode == Mode.PORTRAIT || mode == Mode.NIGHT_VISION ||
             mode == Mode.SUNSET || mode == Mode.MOON
@@ -2224,7 +2233,6 @@ class MainActivity : ComponentActivity() {
 
     // ---------- Obturador: toque, mantener (QuickTake) y deslizar (ráfaga) ----------
 
-    @SuppressLint("ClickableViewAccessibility")
     private fun setupShutter() {
         var downX = 0f
         var longStarted = false
@@ -2238,6 +2246,10 @@ class MainActivity : ComponentActivity() {
                 longStarted = true
                 startEffectRec()
             }
+        }
+        shutter.isSoundEffectsEnabled = false
+        shutter.setOnClickListener {
+            if (!commitPreShot()) onShutterTap()
         }
         shutter.setOnTouchListener { v, ev ->
             when (ev.actionMasked) {
@@ -2265,13 +2277,24 @@ class MainActivity : ComponentActivity() {
                         effectRecording -> stopEffectRec()
                         bursting -> stopBurst()
                         longStarted -> {}
-                        ev.actionMasked == MotionEvent.ACTION_UP && commitPreShot() -> {}
-                        ev.actionMasked == MotionEvent.ACTION_UP -> onShutterTap()
+                        ev.actionMasked == MotionEvent.ACTION_UP -> v.performClick()
                         else -> dropPreShot()
                     }
                 }
             }
             true
+        }
+    }
+
+    private fun updateShutterDescription() {
+        shutter.contentDescription = when (mode) {
+            Mode.VIDEO -> when {
+                videoStopping -> "Guardando video"
+                recording != null -> "Detener video"
+                else -> "Grabar video"
+            }
+            Mode.TIMELAPSE -> if (timelapsing) "Detener time-lapse" else "Grabar time-lapse"
+            else -> "Tomar foto"
         }
     }
 
@@ -2468,12 +2491,15 @@ class MainActivity : ComponentActivity() {
     private fun toggleVideo() {
         val vc = videoCapture ?: return
         recording?.let {
+            if (videoStopping) return
+            videoStopping = true
             // Se corta en este instante: el aviso va ya (antes sonaba cuando terminaba de guardar)
             it.stop()
             playSound(MediaActionSound.STOP_VIDEO_RECORDING)
             shutter.setBackgroundResource(R.drawable.shutter_rec)
             recTimer.visibility = View.GONE
             processingStart()
+            updateShutterDescription()
             return
         }
         val name = "VID_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
@@ -2503,12 +2529,15 @@ class MainActivity : ComponentActivity() {
                     recording = null
                     shutter.setBackgroundResource(R.drawable.shutter_rec)
                     recTimer.visibility = View.GONE
-                    processingEnd()
+                    if (videoStopping) processingEnd()
+                    videoStopping = false
+                    updateShutterDescription()
                     if (event.hasError()) showToast("Error grabando: ${event.error}")
                     refreshThumbnail()
                 }
             }
         }
+        updateShutterDescription()
     }
 
     // ---------- Cámara ----------
@@ -2848,6 +2877,7 @@ class MainActivity : ComponentActivity() {
         holdStart(3)
         val order = listOf(lo, 0, hi)
         val shots = ArrayList<ByteArray>()
+        var neutral: ByteArray? = null
         val currentFilter = filter
         val vivid = vividActive()
         fun next(i: Int) {
@@ -2855,7 +2885,7 @@ class MainActivity : ComponentActivity() {
                 applyExposure()
                 busy = false
                 holdEnd(processing = true, note = "Juntando las 3 fotos…")
-                saveExecutor.execute { saveSunset(shots, currentFilter, vivid) }
+                saveExecutor.execute { saveSunset(shots, neutral, currentFilter, vivid) }
                 return
             }
             val future = try {
@@ -2869,6 +2899,7 @@ class MainActivity : ComponentActivity() {
                     grab(onStarted = { shotTaken(sound = i == 0) }) { b ->
                         runOnUiThread {
                             if (b != null) shots += b
+                            if (i == 1) neutral = b
                             next(i + 1)
                         }
                     }
@@ -2880,17 +2911,18 @@ class MainActivity : ComponentActivity() {
         next(0)
     }
 
-    private fun saveSunset(shots: List<ByteArray>, f: PhotoFilter, vivid: Boolean = false) {
-        if (shots.isEmpty()) {
+    private fun saveSunset(shots: List<ByteArray>, neutral: ByteArray?, f: PhotoFilter, vivid: Boolean = false) {
+        val reference = neutral ?: shots.lastOrNull()
+        if (reference == null) {
             finishSave("No se pudo tomar la foto")
             return
         }
         val msg = try {
             if (shots.size < 3) {
-                // Alguna falló: queda la última, con la mejora de atardecer
+                // Si falta una toma, mejora la exposición de referencia.
                 MotionPhotoWriter.save(
                     this,
-                    MotionPhotoWriter.applyFilter(Enhance.jpeg(this, shots.last(), sunset = true, vivid = vivid), f),
+                    MotionPhotoWriter.applyFilter(Enhance.jpeg(this, reference, sunset = true, vivid = vivid), f),
                     null, "_ATARDECER",
                 )
                 null
@@ -2917,7 +2949,7 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Atardecer", e)
-            "Error juntando las fotos: ${e.message}"
+            saveOriginalPhoto(reference)
         }
         finishSave(msg)
     }
@@ -2959,7 +2991,7 @@ class MainActivity : ComponentActivity() {
             null
         } catch (e: Throwable) {
             Log.e(TAG, "Luna", e)
-            "Error: ${e.message}"
+            saveOriginalPhoto(shots.first())
         }
         finishSave(msg)
     }
@@ -3783,7 +3815,7 @@ class MainActivity : ComponentActivity() {
             finishSave(null)
         } catch (e: Throwable) {
             Log.e(TAG, "Error en instantánea", e)
-            finishSave("Error: ${e.message}")
+            finishSave(saveOriginalPhoto(photo))
         }
     }
 
@@ -4191,7 +4223,7 @@ class MainActivity : ComponentActivity() {
             finishSave(null)
         } catch (e: Throwable) {
             Log.e(TAG, "Fotomatón", e)
-            finishSave("Error: ${e.message}")
+            finishSave(saveOriginalPhoto(shots.first()))
         }
     }
 
@@ -4225,6 +4257,7 @@ class MainActivity : ComponentActivity() {
     private fun startTimelapse() {
         if (busy) return
         timelapsing = true
+        updateShutterDescription()
         busy = true
         timelapseStart = System.currentTimeMillis()
         recorder.timelapseStep = 15
@@ -4240,6 +4273,7 @@ class MainActivity : ComponentActivity() {
     private fun stopTimelapse() {
         if (!timelapsing) return
         timelapsing = false
+        updateShutterDescription()
         main.removeCallbacks(timelapseTick)
         playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         shutter.setBackgroundResource(R.drawable.shutter_rec)

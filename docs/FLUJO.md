@@ -66,6 +66,7 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
   INSTANTÁNEA.
 - **Miniatura** (izquierda): abre la galería. Mientras se procesa una foto, gira un aro.
 - **Obturador** (centro).
+  Con TalkBack se puede activar como botón. Su etiqueta indica la acción de foto, video o time-lapse.
 - **Girar cámara** (derecha).
 
 ### Insignias
@@ -92,6 +93,9 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 
 Si el toque termina siendo video o ráfaga, la foto que se pidió al apoyar el dedo **se descarta**
 (no aparece en la galería).
+
+Cambiar de modo, girar la cámara o tocar el botón del temporizador cancela una cuenta
+regresiva que ya esté corriendo.
 
 ### Disparo sin retraso (ZSL)
 
@@ -192,6 +196,9 @@ cabe y se cierra tocando fuera o con "Listo".
    pendiente. Si tampoco se puede guardar el original, se avisa «No se pudo guardar la foto».
 4. Terminar de guardar una foto actualiza el aro y la miniatura. El obturador y el aviso LIVE
    los controla la captura activa.
+5. Si falla el procesado en un modo de foto, se intenta guardar la captura original. En
+   ATARDECER se prefiere la exposición neutra si llegó. En LUNA y fotomatón se usa la primera
+   captura válida como respaldo.
 
 ## 9. Galería y visor
 
@@ -239,7 +246,7 @@ cabe y se cierra tocando fuera o con "Listo".
   con una foto confirmada y el clip pendiente, se guarda el JPEG cuando está disponible.
   Falta comprobar en el Redmi el regreso del fondo durante una captura.
 - Proteger las ediciones de portada Live y las ediciones en el mismo archivo del visor si falla
-  la escritura. Revisar también los respaldos al fallar INSTANTÁNEA, EFECTOS, ATARDECER y LUNA.
+  la escritura.
 - Extensiones del fabricante: «Procesado Xiaomi» consulta disponibilidad por lente. Falta probar
   que cada opción detectada abra una sesión y guarde una foto en el Redmi.
 - Disparo al apoyar el dedo también en INSTANTÁNEA y EFECTOS.
@@ -286,3 +293,10 @@ cabe y se cierra tocando fuera o con "Listo".
     probar Preview + ImageCapture y después comprobar ImageAnalysis, QR y LIVE por separado.
 22. Disparar con LIVE y salir al inicio del cel antes de que termine el clip. Volver y comprobar
     que quede una foto legible, se cierre el aviso LIVE y funcione el siguiente disparo.
+23. Iniciar una cuenta de 3 s y cambiar de modo antes del cero. Repetir girando la cámara y
+    tocando el botón del temporizador. La cuenta debe desaparecer sin tomar foto.
+24. Si falla el procesado de un modo de foto después de capturar, comprobar que quede un JPEG
+    legible y aparezca el aviso de que se guardó la foto original.
+25. En VIDEO, tocar dos veces seguidas para detener una grabación. Debe sonar y empezar a
+    guardar una vez, y el aro debe apagarse cuando termine. Activar TalkBack y comprobar que
+    el obturador anuncia y ejecuta la acción de FOTO, VIDEO y TIME-LAPSE.
