@@ -18,10 +18,22 @@ todo lo pesado va en segundo plano y medido.
 
 - Rama de trabajo: `dev`. Cada push a `dev` compila (sirve para ver si compila).
 - Publicar: `git push origin dev:main`. Eso crea el Release `build-N` con `Camaratrix-v1.0.N.apk`
-  (N = número de ejecución de Actions). Hender lo instala desde el cel.
+  (N = número de ejecución de Actions). Hender lo instala desde el cel. **Solo cuando Hender lo pida.**
+- Cada push a `dev` también deja una **Prueba de dev** en Releases (tag `prueba-dev`, marcada como
+  versión preliminar, siempre una sola): así Hender prueba lo nuevo sin publicar a main.
+- Pruebas: `./gradlew testDebugUnitTest` (JUnit en `app/src/test`, también corre en Actions antes
+  de compilar). Las imágenes de prueba son sintéticas (`TestImages.kt`): no hacen falta archivos.
 - No hay SDK de Android local en el entorno de los agentes: lo que no se pueda compilar aquí se
   prueba con harnesses de JVM (ver "Probar sin cel").
 - Kotlin, minSdk 29, targetSdk 34, CameraX 1.4.1 (core, camera2, lifecycle, view, video, extensions).
+
+## Cómo trabajamos Claude y Codex a la vez
+
+- Codex trabaja en `dev`. Claude trabaja en ramas `claude/…` y entra a `dev` con un pull request
+  (Actions compila y corre las pruebas del PR). Antes de empujar a `dev`: `git pull --rebase`.
+- Cada uno actualiza en `docs/FLUJO.md` solo las secciones de lo que cambió; si dos cambios tocan
+  lo mismo, se junta a mano dejando las dos cosas.
+- Nadie publica a `main` sin que Hender lo pida.
 
 ## Reglas del proyecto (las pidió Hender)
 
@@ -56,7 +68,8 @@ todo lo pesado va en segundo plano y medido.
 | `Bracket.kt` | Alineación por luz (MTB) usada por noche y atardecer. |
 | `CameraSettings.kt` | Claves de ajustes (SharedPreferences). |
 | `PerfMonitor.kt` | Panel de rendimiento (fps, demora del disparo, tiempo hasta lista, memoria). |
-| `Registro.kt` | Registro para revisar errores: guarda el último cierre y comparte el logcat de la app. |
+| `Registro.kt` | Registro para revisar errores: guarda el último cierre, vigila la temperatura del cel y comparte el logcat de la app. |
+| `Orientation.kt` | Giro del cel para la foto (la interfaz es vertical): con margen para no saltar en el borde. |
 | `GalleryActivity.kt`, `ViewerActivity.kt` | Galería y visor (Live, efectos, Viva en copia, texto en vivo). |
 | `Effects*.kt`, `Beauty.kt` | Modo Efectos y belleza. |
 
@@ -68,6 +81,8 @@ todo lo pesado va en segundo plano y medido.
   - `Enhance: Mejora WxH en N ms (caras …, noche=…, viva=…, auto=…): gain=… exp=… wb=R/G/B …`
   - `Camaratrix: Foto lista en N ms`
   - `Camaratrix: Procesado del fabricante: …` (extensiones de cámara disponibles)
+  - `Camaratrix: Orientación: 90°` (la foto sigue al cel de lado)
+  - `Registro: Temperatura del cel: …` (el G99 frena cuando se calienta)
 - En el cel: **Ajustes > Compartir registro** arma un .txt (app, cel, ajustes, último cierre
   inesperado y logcat de la app) en `Descargas/Camaratrix` y abre el menú de compartir. Pídele
   ese archivo a Hender cuando haya un error.
@@ -75,11 +90,16 @@ todo lo pesado va en segundo plano y medido.
 
 ## Probar sin cel
 
-`EnhanceCore.kt`, `NightStack.kt`, `Brightness.kt` y `Bracket.kt` no usan Android: se compilan con
-`kotlinc` junto a un `main` de prueba que lee PNG/JPG con `javax.imageio` y escribe el resultado.
-Así se probaron Viva, el color de noche y el descarte de fotos movidas (ráfagas sintéticas con la
-cara quieta, cel movido, cabeza movida, otra escena y una mano). Los shaders AGSL se validan con
-`skia-python` (`skia.RuntimeEffect.MakeForShader`).
+`EnhanceCore.kt`, `NightStack.kt`, `Brightness.kt`, `Bracket.kt` y `Orientation.kt` no usan
+Android, así que tienen pruebas JUnit en `app/src/test` (corren en Actions):
+- `NightStackTest`: quieto (menos grano), cel movido poco (se alinea), cel movido mucho, otra
+  escena y cabeza movida (sin fantasmas ni doble exposición). Fallan con el código de v1.0.71.
+- `EnhanceCoreTest`: sin mejora ni Viva no cambia los medios tonos; foto clara de noche no se
+  lava; el morado de noche se corrige; de día no; Viva sube color y contraste.
+- `BrightnessTest`: color de noche (gris y lámpara cálida intactos, morado corregido, mismo brillo).
+- `OrientationTest`: posiciones y margen del giro.
+Para mirar resultados a ojo se pueden compilar con `kotlinc` junto a un `main` que lea PNG/JPG
+con `javax.imageio`. Los shaders AGSL se validan con `skia-python` (`skia.RuntimeEffect.MakeForShader`).
 
 ## Pendientes conocidos
 
