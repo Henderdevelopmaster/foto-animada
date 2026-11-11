@@ -25,7 +25,7 @@ todo lo pesado va en segundo plano y medido.
   de compilar). Las imágenes de prueba son sintéticas (`TestImages.kt`): no hacen falta archivos.
 - No hay SDK de Android local en el entorno de los agentes: lo que no se pueda compilar aquí se
   prueba con harnesses de JVM (ver "Probar sin cel").
-- Kotlin, minSdk 29, targetSdk 34, CameraX 1.4.1 (core, camera2, lifecycle, view, video, extensions).
+- Kotlin, minSdk 29, targetSdk 34, CameraX 1.6.2 (core, camera2, lifecycle, view, video, extensions).
 
 ## Cómo trabajamos Claude y Codex a la vez
 

@@ -131,6 +131,7 @@ object Registro {
         append("Cel: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
             .append(" (").append(Build.HARDWARE).append(") · Android ").append(Build.VERSION.RELEASE)
             .append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
+        append("Compilación del cel: ").append(Build.VERSION.INCREMENTAL).append('\n')
         val rt = Runtime.getRuntime()
         append("Núcleos: ").append(rt.availableProcessors()).append(" · memoria máx. de la app: ")
             .append(rt.maxMemory() shr 20).append(" MB\n")

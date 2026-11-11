@@ -2561,7 +2561,8 @@ class MainActivity : ComponentActivity() {
         val provider = provider ?: return
         val f = try {
             androidx.camera.extensions.ExtensionsManager.getInstanceAsync(this, provider)
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
+            Log.w(TAG, "No se pudo iniciar la consulta de extensiones", e)
             vendorExt = "no se pudo revisar"
             return
         }
@@ -2575,14 +2576,34 @@ class MainActivity : ComponentActivity() {
                     androidx.camera.extensions.ExtensionMode.BOKEH to "Retrato",
                     androidx.camera.extensions.ExtensionMode.FACE_RETOUCH to "Retoque",
                 )
-                fun list(sel: CameraSelector): String {
-                    val ok = modes.filter { (m, _) ->
-                        try { em.isExtensionAvailable(sel, m) } catch (e: Throwable) { false }
-                    }.map { it.second }
-                    return if (ok.isEmpty()) "ninguna" else ok.joinToString(", ")
+                fun describeLens(lens: String, selector: CameraSelector): String {
+                    try {
+                        if (!provider.hasCamera(selector)) return "$lens: cámara no disponible"
+                    } catch (e: Exception) {
+                        Log.w(TAG, "No se pudo consultar la cámara $lens", e)
+                        return "$lens: no se pudo revisar"
+                    }
+                    val supported = mutableListOf<String>()
+                    val failed = mutableListOf<String>()
+                    for ((extension, label) in modes) {
+                        try {
+                            if (em.isExtensionAvailable(selector, extension)) supported += label
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo consultar $label en cámara $lens", e)
+                            failed += label
+                        }
+                    }
+                    val available = when {
+                        supported.isNotEmpty() -> supported.joinToString(", ")
+                        failed.isEmpty() -> "ninguna"
+                        else -> "sin confirmar"
+                    }
+                    val warning = if (failed.isEmpty()) "" else " (sin revisar: ${failed.joinToString(", ")})"
+                    return "$lens: $available$warning"
                 }
-                "atrás " + list(CameraSelector.DEFAULT_BACK_CAMERA) + " · frontal " + list(CameraSelector.DEFAULT_FRONT_CAMERA)
-            } catch (e: Throwable) {
+                describeLens("trasera", CameraSelector.DEFAULT_BACK_CAMERA) + " · " +
+                    describeLens("frontal", CameraSelector.DEFAULT_FRONT_CAMERA)
+            } catch (e: Exception) {
                 Log.w(TAG, "Extensiones", e)
                 "no se pudo revisar"
             }

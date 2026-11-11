@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.hender.fotoanimada"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.hender.fotoanimada"
@@ -42,7 +42,7 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
-    val camerax = "1.4.1"
+    val camerax = "1.6.2"
     implementation("androidx.camera:camera-core:$camerax")
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
@@ -60,7 +60,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.viewpager2:viewpager2:1.1.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
-    val media3 = "1.4.1"
+    val media3 = "1.9.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-ui:$media3")
 }

@@ -252,8 +252,13 @@ cabe y se cierra tocando fuera o con "Listo".
   Falta comprobar en el Redmi el regreso del fondo durante una captura.
 - Proteger las ediciones de portada Live y las ediciones en el mismo archivo del visor si falla
   la escritura.
-- Extensiones del fabricante: «Procesado Xiaomi» consulta disponibilidad por lente. Falta probar
-  que cada opción detectada abra una sesión y guarde una foto en el Redmi.
+- Extensiones del fabricante: CameraX 1.6.2 vuelve a consultar HDR, Noche, Retrato, Retoque y Auto
+  para frontal y trasera. «Procesado Xiaomi» muestra los modos detectados, «ninguna» cuando todas
+  las consultas devuelven que no hay soporte y «sin confirmar» si falló alguna consulta y no
+  hubo detecciones. El registro incluye la compilación del cel. Falta confirmar la detección en
+  el Redmi y probar captura con las opciones que aparezcan. La consulta no activa extensiones.
+  Para adoptar esa versión se compila con SDK 36 y se alinean las dependencias de Media3
+  del visor con las de CameraX. El mínimo sigue en Android 10.
 - Disparo al apoyar el dedo también en INSTANTÁNEA y EFECTOS.
 
 ---
