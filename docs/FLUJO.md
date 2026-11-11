@@ -25,6 +25,11 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
    lista otra vez.
 7. **La vista previa nunca se traba** por tareas de fondo (QR, brillo, miniaturas): todo eso usa
    imágenes pequeñas que reduce la GPU.
+8. **La foto sale derecha aunque el cel esté de lado.** La interfaz es siempre vertical, pero
+   la foto, el video, el Live, la ráfaga y el time-lapse siguen el giro del cel (de lado, de
+   cabeza). Los íconos redondos y el ± giran en su sitio para leerse bien. Cambia cuando el cel
+   pasó 15° del medio camino (no salta en el borde); acostado boca arriba se queda como estaba.
+   Excepción: la vista previa de EFECTOS sigue vertical (la dibuja el motor de efectos).
 
 ---
 
@@ -303,3 +308,12 @@ descarga `Camaratrix-dev-<número>` desde Artifacts y extrae el APK del ZIP.
 25. En VIDEO, tocar dos veces seguidas para detener una grabación. Debe sonar y empezar a
     guardar una vez, y el aro debe apagarse cuando termine. Activar TalkBack y comprobar que
     el obturador anuncia y ejecuta la acción de FOTO, VIDEO y TIME-LAPSE.
+
+### Orientación y registro (pruebas en el Redmi)
+
+- Con el cel de lado (girado a la derecha y a la izquierda), tomar una foto, una ráfaga corta,
+  un Live y un video: en la galería y en Google Fotos deben verse acostados (más anchos que
+  altos) y derechos. Repetir con la frontal. Los íconos deben quedar legibles al girar.
+- Inclinar el cel despacio cerca de 45°: los íconos no deben parpadear entre dos posiciones.
+- Ajustes > Compartir registro: el archivo debe traer "Temperatura" en el encabezado y, si el cel
+  se calentó, líneas "Temperatura del cel: …". Útil cuando la vista previa o el Live se ponen lentos.
