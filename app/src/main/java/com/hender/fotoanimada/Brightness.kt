@@ -111,8 +111,8 @@ object Brightness {
     /** Tinte normal de una escena con caras (la piel no es gris: tiene un poco menos verde). */
     private const val TINT_TARGET = 0.92f
 
-    /** Azul de más respecto al verde que se deja (la luz de la pantalla es azulada). */
-    private const val BLUE_TARGET = 0.98f
+    /** Azul de más respecto al verde que se deja (la luz de la pantalla es azulada); gris = 1. */
+    private const val BLUE_TARGET = 1.0f
 
     /** Ganancias de color de noche: R, G y B (con el mismo brillo). */
     class NightWb(val r: Float, val g: Float, val b: Float) {
@@ -132,7 +132,9 @@ object Brightness {
         val t = (sumG / rb).toFloat()
         val gG = if (t >= TINT_TARGET) 1f else Math.pow((TINT_TARGET / t).toDouble(), 0.8).toFloat().coerceAtMost(1.25f)
         val bg = (sumB / (sumG * gG)).toFloat()
-        val gB = if (bg <= BLUE_TARGET) 1f else Math.pow((BLUE_TARGET / bg).toDouble(), 0.6).toFloat().coerceAtLeast(0.85f)
+        val gB = if (bg <= BLUE_TARGET * 1.01f) 1f else Math.pow((BLUE_TARGET / bg).toDouble(), 0.6).toFloat().coerceAtLeast(0.85f)
+        // Una escena gris (o cálida) queda exactamente igual
+        if (gG == 1f && gB == 1f) return NightWb(1f, 1f, 1f)
         // Mismo brillo: la luz no cambia, solo el color
         val n = 1f / (0.299f + 0.587f * gG + 0.114f * gB)
         return NightWb(n, gG * n, gB * n)
