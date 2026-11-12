@@ -34,27 +34,28 @@ object Enhance {
      * Devuelve la foto mejorada. Si algo falla, devuelve la original tal cual.
      * [aim] > 0 = de noche: la foto se sube igual que se veía la vista previa ([Brightness]).
      * [vivid] = Viva prendida (más nitidez y color). [auto] = la mejora automática (con ella
-     * apagada y Viva prendida, la foto lleva solo Viva).
+     * apagada y Viva prendida, la foto lleva solo Viva). [lens] = ojo de pez ([Fisheye]): va
+     * después de la mejora, en la misma pasada (se codifica una sola vez).
      */
     fun jpeg(
         context: Context, jpeg: ByteArray, night: Boolean = false, sunset: Boolean = false,
         aim: Float = 0f, maxGain: Float = 1f, vivid: Boolean = false,
-        auto: Boolean = enabled(context) || night || sunset,
+        auto: Boolean = enabled(context) || night || sunset, lens: Int = Fisheye.OFF,
     ): ByteArray {
-        if (!auto && !vivid) return jpeg
+        if (!auto && !vivid) return Lens.jpeg(jpeg, lens)
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
             // Las fotos gigantes (modo MÁX) se dejan con todo su detalle
-            if (bounds.outWidth.toLong() * bounds.outHeight > 17_000_000L) return jpeg
+            if (bounds.outWidth.toLong() * bounds.outHeight > 17_000_000L) return Lens.jpeg(jpeg, lens)
             val bmp = Processing.decode(jpeg, 8192)
-            val out = bitmap(context, bmp, night, sunset, aim, maxGain, vivid, auto)
+            val out = Lens.apply(bitmap(context, bmp, night, sunset, aim, maxGain, vivid, auto), lens)
             val bytes = Processing.encode(out, 95)
             out.recycle()
             bytes
         } catch (e: Throwable) {
             Log.e(TAG, "No se pudo mejorar la foto", e)
-            jpeg
+            Lens.jpeg(jpeg, lens) // sin la mejora, pero con el efecto que se veía
         }
     }
 

@@ -70,18 +70,21 @@ todo lo pesado va en segundo plano y medido.
 | `PerfMonitor.kt` | Panel de rendimiento (fps, demora del disparo, tiempo hasta lista, memoria). |
 | `Registro.kt` | Registro para revisar errores: guarda el último cierre, vigila la temperatura del cel y comparte el logcat de la app. |
 | `Orientation.kt` | Giro del cel para la foto (la interfaz es vertical): con margen para no saltar en el borde. |
+| `Fisheye.kt` | Ojo de pez (gran angular y espejo de tienda) en Kotlin puro: geometría, muestreo cúbico y trilineal, dibujo por franjas. El shader LENS de `InstantFx.kt` hace la misma cuenta en la vista previa. |
+| `Lens.kt` | Puente Android del ojo de pez: lo aplica al bitmap después de la mejora y antes del filtro; si falla, la foto sigue sin él. |
 | `GalleryActivity.kt`, `ViewerActivity.kt` | Galería y visor (Live, efectos, Viva en copia, texto en vivo). |
 | `Effects*.kt`, `Beauty.kt` | Modo Efectos y belleza. |
 
 ## Registros (logs)
 
-- Tags: `Camaratrix` (MainActivity), `Enhance`, `MotionRecorder`, `Registro`. Líneas clave:
+- Tags: `Camaratrix` (MainActivity), `Enhance`, `Lens`, `MotionRecorder`, `Registro`. Líneas clave:
   - `Camaratrix: Disparo: <MODO> <frontal|trasera> noche=… ganancia=… fotos=… live=… viva=… zsl=…`
   - `Camaratrix: Noche: N fotos, usado [...] [d=dx,dy k=… mov=… centro=… | se movió (…) | movida …]` (NightStack)
   - `Enhance: Mejora WxH en N ms (caras …, noche=…, viva=…, auto=…): gain=… exp=… wb=R/G/B …`
   - `Camaratrix: Foto lista en N ms`
   - `Camaratrix: Procesado del fabricante: …` (extensiones de cámara disponibles)
   - `Camaratrix: Orientación: 90°` (la foto sigue al cel de lado)
+  - `Camaratrix: Ojo de pez: gran-angular|espejo|no` y `Lens: Ojo de pez <estilo> WxH en N ms`
   - `Registro: Temperatura del cel: …` (el G99 frena cuando se calienta)
 - En el cel: **Ajustes > Compartir registro** arma un .txt (app, cel, ajustes, último cierre
   inesperado y logcat de la app) en `Descargas/Camaratrix` y abre el menú de compartir. Pídele
@@ -90,7 +93,7 @@ todo lo pesado va en segundo plano y medido.
 
 ## Probar sin cel
 
-`EnhanceCore.kt`, `NightStack.kt`, `Brightness.kt`, `Bracket.kt` y `Orientation.kt` no usan
+`EnhanceCore.kt`, `NightStack.kt`, `Brightness.kt`, `Bracket.kt`, `Orientation.kt` y `Fisheye.kt` no usan
 Android, así que tienen pruebas JUnit en `app/src/test` (corren en Actions):
 - `NightStackTest`: quieto (menos grano), cel movido poco (se alinea), cel movido mucho, otra
   escena y cabeza movida (sin fantasmas ni doble exposición). Fallan con el código de v1.0.71.
@@ -98,6 +101,9 @@ Android, así que tienen pruebas JUnit en `app/src/test` (corren en Actions):
   lava; el morado de noche se corrige; de día no; Viva sube color y contraste.
 - `BrightnessTest`: color de noche (gris y lámpara cálida intactos, morado corregido, mismo brillo).
 - `OrientationTest`: posiciones y margen del giro.
+- `FisheyeTest`: centro y esquinas del gran angular, espejo con la foto entera y sin aplastar
+  caras, rayas finas sin moiré en los bordes y nítidas en el centro, franjas completas e iguales
+  con cualquier número de hilos.
 Para mirar resultados a ojo se pueden compilar con `kotlinc` junto a un `main` que lea PNG/JPG
 con `javax.imageio`. Los shaders AGSL se validan con `skia-python` (`skia.RuntimeEffect.MakeForShader`).
 
@@ -111,6 +117,7 @@ al final de cada tanda.
 | FOTO (toque, al apoyar, volumen, ráfaga, temporizador, flash) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | FOTO con LIVE (y salir al fondo con un Live pendiente) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | FOTO con Viva, filtro y formato 1:1 / 9:16 | ✓ | ✓ | ✓ | ✓ | |
+| FOTO con ojo de pez (gran angular, espejo; con LIVE, filtro, HDR) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | RETRATO, NOCHE, ATARDECER | ✓ | ✓ | ✓ | ✓ | ✓ |
 | INSTANTÁNEA (foto, fotomatón, boomerang) | ✓ | ✓ | ✓ | ✓ | |
 | EFECTOS, VISIÓN NOCTURNA, LUNA | ✓ | ✓ (efectos) | ✓ | ✓ | |

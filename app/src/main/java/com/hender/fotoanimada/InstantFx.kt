@@ -179,6 +179,155 @@ half4 main(float2 p) {
     /** Se compila una sola vez (de noche se actualiza seguido con el brillo). */
     private var toneShader: Any? = null
 
+    /**
+     * Ojo de pez en vivo: la misma cuenta que [Fisheye] usa en la foto (gran angular o espejo
+     * de tienda), para que lo que se ve sea lo que se guarda.
+     */
+    private const val LENS = """
+uniform shader content;
+uniform float2 size;
+uniform float style;
+uniform float c;
+uniform float radius;
+uniform float rim;
+uniform float vig;
+uniform float back;
+uniform float2 light; // giro del cel (cos, sin): el brillo del espejo queda arriba a la izquierda de quien mira
+
+float smooth01(float a, float b, float v) {
+    float t = clamp((v - a) / (b - a), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float fishIn(float rho) {
+    float ac = atan(c);
+    return tan(clamp(rho, 0.0, 1.0) * ac) / c;
+}
+
+float fishSlope(float rho) {
+    float ac = atan(c);
+    float t = tan(clamp(rho, 0.0, 1.0) * ac);
+    return ac * (1.0 + t * t) / c;
+}
+
+// Toma el color promediando 4 puntos cuando la zona va muy comprimida (sin dientes)
+half3 grab(float2 q, float sc) {
+    if (sc < 1.5) return content.eval(q).rgb;
+    float o = 0.3 * sc;
+    return (content.eval(q + float2(o, o * 0.5)).rgb + content.eval(q + float2(-o * 0.5, o)).rgb +
+            content.eval(q + float2(-o, -o * 0.5)).rgb + content.eval(q + float2(o * 0.5, -o)).rgb) * 0.25;
+}
+
+half4 main(float2 p) {
+    float2 ctr = size * 0.5;
+    float2 d = p - ctr;
+    float r = length(d);
+    if (style < 1.5) {
+        // Gran angular: toda la imagen curvada, las esquinas siguen siendo las esquinas
+        float rho = r / length(ctr);
+        float k = rho > 0.0001 ? fishIn(rho) / rho : atan(c) / c;
+        float sc = max(fishSlope(rho), k);
+        half3 col = grab(ctr + d * k, sc);
+        return half4(col * (1.0 - vig * rho * rho * sqrt(rho)), 1.0);
+    }
+    // Espejo de tienda: la foto entera en un espejo redondo con aro, sobre el fondo oscuro
+    float rc = radius * min(size.x, size.y);
+    float rw = rim * rc;
+    float aa = max(1.2, rc / 500.0);
+    // La luz va con quien mira: el brillo y la sombra no giran con el cel de lado
+    float2 dl = float2(d.x * light.x - d.y * light.y, d.x * light.y + d.y * light.x);
+    float ringOut = 1.0 - smooth01(rc + rw - aa, rc + rw + aa, r);
+    half3 col = half3(0.0);
+    if (ringOut > 0.0) {
+        // Aro metálico: claro arriba a la izquierda
+        float ang = (-(dl.x + dl.y) / max(r, 1.0)) * 0.7071;
+        float bevel = 1.0 - clamp(abs((r - rc - rw * 0.5) / (rw * 0.5)), 0.0, 1.0);
+        float m = 0.42 + 0.30 * ang + 0.18 * bevel;
+        half3 metal = half3(m, m, m);
+        col = metal;
+        if (r < rc + aa) {
+            float rho = min(r / rc, 1.0);
+            float2 u = r > 0.001 ? d / r : float2(1.0, 0.0);
+            // Hasta dónde llega la foto en esa dirección (rectángulo con puntas redondeadas);
+            // en el centro lo mismo para todos lados, así las caras no se aplastan
+            float a = abs(u.x) / ctr.x;
+            float b = abs(u.y) / ctr.y;
+            float reach = 1.0 / max(sqrt(sqrt(a * a * a * a + b * b * b * b)), 0.000001);
+            float r0 = min(ctr.x, ctr.y);
+            float span = r0 + (reach - r0) * rho * rho;
+            float f = fishIn(rho);
+            float rin = f * span;
+            float radial = (fishSlope(rho) * span + f * (reach - r0) * 2.0 * rho) / rc;
+            float tang = rho > 0.001 ? rin / r : radial;
+            half3 g = grab(ctr + u * rin, max(radial, tang));
+            float edge = 1.0 - 0.22 * smooth01(0.72, 1.0, rho);
+            float2 n = dl / rc + float2(0.32, 0.42);
+            float gl = 0.13 * (1.0 - smooth01(0.05, 0.42, sqrt(n.x * n.x * 0.55 + n.y * n.y * 1.6)));
+            g = g * edge;
+            g = g + (half3(1.0) - g) * gl;
+            col = g + (metal - g) * smooth01(rc - aa, rc + aa, r);
+        }
+        if (ringOut >= 1.0) return half4(col, 1.0);
+    }
+    // Fondo: la imagen borrosa (12 puntos en dos aros) y oscura, con la sombra del espejo debajo
+    float br = 0.045 * min(size.x, size.y);
+    float h = br * 0.7071; // diagonal del aro de afuera
+    float q = br * 0.3536; // aro de adentro (la mitad), en diagonal
+    half3 bg = content.eval(p + float2(br, 0.0)).rgb + content.eval(p - float2(br, 0.0)).rgb +
+               content.eval(p + float2(0.0, br)).rgb + content.eval(p - float2(0.0, br)).rgb +
+               content.eval(p + float2(h, h)).rgb + content.eval(p - float2(h, h)).rgb +
+               content.eval(p + float2(h, -h)).rgb + content.eval(p - float2(h, -h)).rgb +
+               content.eval(p + float2(q, q)).rgb + content.eval(p - float2(q, q)).rgb +
+               content.eval(p + float2(q, -q)).rgb + content.eval(p - float2(q, -q)).rgb;
+    bg *= back / 12.0;
+    float2 ds = float2(dl.x, dl.y - rc * 0.035);
+    float shadowR = rc + rw;
+    bg *= 1.0 - 0.55 * (1.0 - smooth01(shadowR * 0.98, shadowR * 1.16, length(ds)));
+    return half4(bg + (col - bg) * ringOut, 1.0);
+}
+"""
+
+    /**
+     * Ojo de pez para la vista previa ([Fisheye.WIDE] o [Fisheye.MIRROR]) sobre una vista de w×h.
+     * [degrees] es el giro del cel (0, 90, 180, 270): el brillo del espejo queda arriba a la
+     * izquierda de quien mira, igual que en la foto (que se guarda derecha).
+     */
+    fun lensPreview(style: Int, w: Int, h: Int, degrees: Int = 0): RenderEffect? {
+        if (Build.VERSION.SDK_INT < 33 || style == Fisheye.OFF || w <= 0 || h <= 0) return null
+        return try {
+            val sh = (lensShader ?: RuntimeShader(LENS).also { lensShader = it }) as RuntimeShader
+            val rad = Math.toRadians(degrees.toDouble())
+            sh.setFloatUniform("size", w.toFloat(), h.toFloat())
+            sh.setFloatUniform("style", style.toFloat())
+            sh.setFloatUniform("c", if (style == Fisheye.WIDE) Fisheye.WIDE_C else Fisheye.MIRROR_C)
+            sh.setFloatUniform("radius", Fisheye.MIRROR_RADIUS)
+            sh.setFloatUniform("rim", Fisheye.RIM)
+            sh.setFloatUniform("vig", Fisheye.WIDE_VIGNETTE)
+            sh.setFloatUniform("back", Fisheye.BACK_LIGHT)
+            sh.setFloatUniform("light", Math.cos(rad).toFloat(), Math.sin(rad).toFloat())
+            RenderEffect.createRuntimeShaderEffect(sh, "content")
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private var lensOk: Boolean? = null
+
+    /** Si este cel puede mostrar el ojo de pez en la vista previa (Android 13 o más nuevo). */
+    fun lensSupported(): Boolean {
+        lensOk?.let { return it }
+        val ok = if (Build.VERSION.SDK_INT < 33) false else try {
+            RuntimeShader(LENS) // solo para ver que compila (la vista previa usa su propia copia)
+            true
+        } catch (e: Throwable) {
+            false
+        }
+        lensOk = ok
+        return ok
+    }
+
+    private var lensShader: Any? = null
+
     /** Visión nocturna en vivo (verde, con grano y viñeta). */
     fun nightVisionPreview(w: Int, h: Int): RenderEffect? {
         if (Build.VERSION.SDK_INT < 33 || w <= 0 || h <= 0) return null

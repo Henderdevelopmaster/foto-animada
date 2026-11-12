@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Botón de ojo de pez: como los del zoom; prendido, con aro amarillo (igual que Viva y el ±) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_activated="true">
+        <shape android:shape="oval">
+            <solid android:color="#99000000" />
+            <stroke android:width="1.5dp" android:color="#FFD60A" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval"><solid android:color="#66000000" /></shape>
+    </item>
+</selector>
