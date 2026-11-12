@@ -144,6 +144,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var vividButton: ImageButton
     /** Viva (más nitidez y color): solo si el usuario lo prende; queda guardado. */
     private var vividOn = false
+    private lateinit var lensButton: ImageButton
+    /** Ojo de pez (Fisheye.OFF, WIDE o MIRROR): solo en Foto y se apaga al cerrar la app. */
+    private var lensStyle = Fisheye.OFF
+    /** La vista previa muestra el ojo de pez (el filtro de color va entonces después del lente). */
+    private var lensShown = false
     private lateinit var evDial: ExposureDialView
     private var dialTouching = false
     private var aeLocked = false
@@ -266,6 +271,10 @@ class MainActivity : ComponentActivity() {
         root.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
             if (r - l != or - ol || b - t != ob - ot) layoutPreview()
         }
+        // El ojo de pez se calcula con el tamaño del visor: si cambia el formato, se rehace
+        previewView.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
+            if ((r - l != or - ol || b - t != ob - ot) && lensStyle != Fisheye.OFF) applyTone()
+        }
         formatButton.setOnClickListener {
             if (busy || recording != null) return@setOnClickListener
             val all = CameraSettings.formats
@@ -314,6 +323,17 @@ class MainActivity : ComponentActivity() {
             tap(it)
             closePanels()
             setVivid(!vividOn)
+        }
+        lensButton = findViewById(R.id.lensButton)
+        lensButton.setOnClickListener {
+            tap(it)
+            closePanels()
+            // Apagado -> gran angular -> espejo -> apagado
+            setLens(when (lensStyle) {
+                Fisheye.OFF -> Fisheye.WIDE
+                Fisheye.WIDE -> Fisheye.MIRROR
+                else -> Fisheye.OFF
+            })
         }
         evDial.onTouchState = { touching ->
             dialTouching = touching
@@ -365,7 +385,11 @@ class MainActivity : ComponentActivity() {
             tap(it)
             applyModeUi()
             if (wasHdrSession != hdrSession(mode)) bindCamera()
-            showToast(if (liveOn) "LIVE activado" else "LIVE desactivado")
+            showToast(when {
+                !liveOn -> "LIVE desactivado"
+                lensStyle != Fisheye.OFF -> "LIVE activado · vuelve al apagar el ojo de pez"
+                else -> "LIVE activado"
+            })
         }
         filterButton.setOnClickListener {
             val show = filterBar.visibility != View.VISIBLE
@@ -514,7 +538,8 @@ class MainActivity : ComponentActivity() {
 
     private fun tap(v: View) = v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
-    private val liveActive get() = liveOn && mode == Mode.PHOTO
+    /** El Live va en pausa con el ojo de pez (el video saldría derecho y la foto curva). */
+    private val liveActive get() = liveOn && mode == Mode.PHOTO && lensStyle == Fisheye.OFF
 
     private val usesAnalysis get() = mode == Mode.PHOTO || mode == Mode.TIMELAPSE || mode == Mode.INSTANT
 
@@ -1016,6 +1041,7 @@ class MainActivity : ComponentActivity() {
 
         liveToggle.visibility = if (mode == Mode.PHOTO) View.VISIBLE else View.INVISIBLE
         liveToggle.setImageResource(if (liveOn) R.drawable.ic_live_on else R.drawable.ic_live_off)
+        updateLensUi()
         val noFilter = mode == Mode.VIDEO || mode == Mode.TIMELAPSE || mode == Mode.EFFECTS || mode == Mode.NIGHT_VISION
         if (filterList.childCount > 0) {
             val wantInstant = mode == Mode.INSTANT
@@ -1426,14 +1452,7 @@ class MainActivity : ComponentActivity() {
 
     private fun applyPreviewFilter() {
         val fx = applyTone()
-        val cf = when {
-            fx != null -> null
-            mode == Mode.NIGHT_VISION -> android.graphics.ColorMatrixColorFilter(InstantFx.nightVisionMatrix())
-            mode == Mode.VIDEO || mode == Mode.TIMELAPSE -> null
-            mode == Mode.EFFECTS -> engine.effect?.matrix()?.let { android.graphics.ColorMatrixColorFilter(it) }
-            mode == Mode.INSTANT -> instantLook.colorFilter()
-            else -> filter.colorFilter()
-        }
+        val cf = previewColorFilter(fx)
         findTexture(previewView)?.setLayerPaint(cf?.let { Paint().apply { colorFilter = it } })
         shapeMask.shape = instantShape
         for (i in 0 until filterList.childCount) {
@@ -1451,9 +1470,20 @@ class MainActivity : ComponentActivity() {
         filterButton.setColorFilter(if (active) 0xFF00E676.toInt() else 0xFFFFFFFF.toInt())
     }
 
+    /** Filtro de color pintado en la textura del visor. Con ojo de pez va en la cadena, después del lente. */
+    private fun previewColorFilter(fx: android.graphics.RenderEffect?): android.graphics.ColorFilter? = when {
+        fx != null || lensShown -> null
+        mode == Mode.NIGHT_VISION -> android.graphics.ColorMatrixColorFilter(InstantFx.nightVisionMatrix())
+        mode == Mode.VIDEO || mode == Mode.TIMELAPSE -> null
+        mode == Mode.EFFECTS -> engine.effect?.matrix()?.let { android.graphics.ColorMatrixColorFilter(it) }
+        mode == Mode.INSTANT -> instantLook.colorFilter()
+        else -> filter.colorFilter()
+    }
+
     /**
      * Efecto de toda la vista previa: los filtros con shader (Android 13+) o el tono de la
-     * mejora, y de noche el brillo digital (lo mismo que llevará la foto). Devuelve el filtro con shader.
+     * mejora, y de noche el brillo digital (lo mismo que llevará la foto). Encima, el ojo de pez
+     * y después el filtro de color (el mismo orden que la foto). Devuelve el filtro con shader.
      */
     private fun applyTone(): android.graphics.RenderEffect? {
         val fx = when {
@@ -1492,10 +1522,22 @@ class MainActivity : ComponentActivity() {
                 wbB = if (night) previewWb.b else 1f,
             )
         } else null
+        val lens = if (lensActive()) {
+            InstantFx.lensPreview(lensStyle, previewView.width, previewView.height, deviceDegrees)
+        } else null
         if (android.os.Build.VERSION.SDK_INT >= 31) {
-            previewView.setRenderEffect(
-                if (fx != null && tone != null) android.graphics.RenderEffect.createChainEffect(fx, tone) else fx ?: tone
-            )
+            var effect = if (fx != null && tone != null) android.graphics.RenderEffect.createChainEffect(fx, tone) else fx ?: tone
+            if (lens != null) {
+                val curved = if (effect != null) android.graphics.RenderEffect.createChainEffect(lens, effect) else lens
+                val cf = filter.colorFilter()
+                effect = if (cf != null) android.graphics.RenderEffect.createColorFilterEffect(cf, curved) else curved
+            }
+            previewView.setRenderEffect(effect)
+        }
+        if ((lens != null) != lensShown) {
+            // El filtro de color pasa de la textura a la cadena (o vuelve)
+            lensShown = lens != null
+            findTexture(previewView)?.setLayerPaint(previewColorFilter(fx)?.let { Paint().apply { colorFilter = it } })
         }
         // El video del Live sigue a la vista previa (de noche Viva va más suave)
         updateRecorderLuts()
@@ -1513,6 +1555,7 @@ class MainActivity : ComponentActivity() {
         append(" ganancia=").append(String.format(java.util.Locale.US, "%.2f", digitalGain))
         append(" mejora=").append(Enhance.enabled(this@MainActivity))
         append(" viva=").append(vividOn)
+        append(" lente=").append(Lens.name(lensStyle))
         append(" hdr=").append(hdrEnabled())
         append(" belleza=").append(Beauty.enabled)
         append(" selfie=").append(if (mirrorSelfies()) "como-te-ves" else "como-te-ven")
@@ -1586,6 +1629,49 @@ class MainActivity : ComponentActivity() {
         applyTone()
         updateRecorderLuts()
         showToast(if (on) "Viva: más nitidez y color" else "Viva apagada")
+    }
+
+    /** Ojo de pez a la vista ahora: en Foto, y no en ráfaga ni QuickTake (esas van derechas). */
+    private fun lensActive() = lensStyle != Fisheye.OFF && mode == Mode.PHOTO && !quickTaking && !bursting &&
+        InstantFx.lensSupported()
+
+    /** El estilo con el que sale una foto tomada ahora. */
+    private fun lensNow() = if (lensActive()) lensStyle else Fisheye.OFF
+
+    private fun setLens(style: Int) {
+        val liveBefore = liveActive
+        lensStyle = style
+        updateLensUi()
+        recorder.enabled = liveActive
+        updateAudio()
+        applyPreviewFilter()
+        Log.i(TAG, "Ojo de pez: ${Lens.name(style)}")
+        val live = when {
+            liveBefore && !liveActive -> " · LIVE en pausa"
+            !liveBefore && liveActive -> " · LIVE de vuelta"
+            else -> ""
+        }
+        showToast(when (style) {
+            Fisheye.WIDE -> "Gran angular (efecto)"
+            Fisheye.MIRROR -> "Espejo de tienda"
+            else -> "Ojo de pez apagado"
+        } + live)
+    }
+
+    private fun updateLensUi() {
+        if (!::lensButton.isInitialized) return
+        val on = lensStyle != Fisheye.OFF
+        lensButton.visibility = if (mode == Mode.PHOTO && InstantFx.lensSupported()) View.VISIBLE else View.GONE
+        lensButton.isActivated = on
+        lensButton.setImageResource(if (lensStyle == Fisheye.MIRROR) R.drawable.ic_mirror else R.drawable.ic_fisheye)
+        lensButton.setColorFilter(if (on) 0xFFFFD60A.toInt() else 0xFFFFFFFF.toInt())
+        lensButton.contentDescription = when (lensStyle) {
+            Fisheye.WIDE -> "Gran angular prendido. Toca para espejo de tienda"
+            Fisheye.MIRROR -> "Espejo de tienda prendido. Toca para apagar"
+            else -> "Ojo de pez apagado. Toca para gran angular"
+        }
+        // LIVE en pausa mientras haya ojo de pez: el botón queda tenue
+        liveToggle.alpha = if (liveOn && on && mode == Mode.PHOTO) 0.45f else 1f
     }
 
     /** Destello amarillo con aro cuando está prendido, blanco cuando no (como el ±). */
@@ -1804,6 +1890,13 @@ class MainActivity : ComponentActivity() {
         main.postDelayed(hideFocus, 5000)
     }
 
+    /** Punto del sensor para enfocar donde se tocó (con ojo de pez, lo que se ve ahí viene de otro lado). */
+    private fun meteringPoint(x: Float, y: Float): androidx.camera.core.MeteringPoint {
+        val (sx, sy) = (if (lensShown) Fisheye.sourcePoint(lensStyle, x, y, previewView.width, previewView.height) else null)
+            ?: (x to y) // fuera del espejo el fondo está en su sitio
+        return previewView.meteringPointFactory.createPoint(sx, sy)
+    }
+
     /** Toque: enfoca y mide la luz en ese punto (y el brillo vuelve a lo normal). */
     private fun focusAt(x: Float, y: Float) {
         val cam = camera ?: return
@@ -1818,7 +1911,7 @@ class MainActivity : ComponentActivity() {
         lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
         if (wasLocked) applySmoothFps() // quita el bloqueo de exposición
-        val point = previewView.meteringPointFactory.createPoint(x, y)
+        val point = meteringPoint(x, y)
         try {
             cam.cameraControl.startFocusAndMetering(
                 FocusMeteringAction.Builder(
@@ -1839,7 +1932,7 @@ class MainActivity : ComponentActivity() {
         autoEv = 0
         lastTapAt = android.os.SystemClock.uptimeMillis()
         applyExposure()
-        val point = previewView.meteringPointFactory.createPoint(x, y)
+        val point = meteringPoint(x, y)
         aeLocked = true
         try {
             val future = cam.cameraControl.startFocusAndMetering(
@@ -2385,6 +2478,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startQuickTake() {
         quickTaking = true
+        if (lensStyle != Fisheye.OFF) applyTone()
         busy = true
         quickStart = System.currentTimeMillis()
         audio.keepUs = (MAX_QUICKTAKE_S + 5) * 1_000_000L
@@ -2402,6 +2496,7 @@ class MainActivity : ComponentActivity() {
     private fun stopQuickTake() {
         if (!quickTaking) return
         quickTaking = false
+        if (lensStyle != Fisheye.OFF) applyTone()
         main.removeCallbacks(quickTick)
         playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         recTimer.visibility = View.GONE
@@ -2439,6 +2534,7 @@ class MainActivity : ComponentActivity() {
     // Ráfaga: fotos seguidas mientras mantienes el obturador deslizado
     private fun startBurst() {
         bursting = true
+        if (lensStyle != Fisheye.OFF) applyTone()
         busy = true
         burstCount = 0
         shutter.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -2488,6 +2584,7 @@ class MainActivity : ComponentActivity() {
 
     private fun stopBurst() {
         bursting = false
+        if (lensStyle != Fisheye.OFF) applyTone()
         recTimer.visibility = View.GONE
     }
 
@@ -2675,6 +2772,7 @@ class MainActivity : ComponentActivity() {
         videoCapture?.targetRotation = r
         rotatingAnalysis?.targetRotation = r
         rotateControls()
+        if (lensShown && lensStyle == Fisheye.MIRROR) applyTone()
     }
 
     /** Los íconos giran en su sitio (por el camino corto) para quedar derechos con el cel de lado. */
@@ -2682,7 +2780,7 @@ class MainActivity : ComponentActivity() {
         if (!::flip.isInitialized) return
         val target = -deviceDegrees.toFloat()
         val views = listOf<View>(flip, thumbnail, flashButton, timerButton, liveToggle, filterButton, gridButton,
-            beautyButton, evButton, vividButton, zoom1, zoom2)
+            beautyButton, evButton, vividButton, lensButton, zoom1, zoom2)
         for (v in views) {
             var t = target
             while (t - v.rotation > 180f) t -= 360f
@@ -2949,12 +3047,13 @@ class MainActivity : ComponentActivity() {
         shotAt = startedAt
         val currentFilter = filter
         val vivid = vividActive()
+        val lens = lensNow()
         val auto = Enhance.enabled(this)
         var reference: ByteArray? = null
         var cancelled = false
         lateinit var deadline: Runnable
         holdStart(3)
-        Log.i(TAG, "Disparo: FOTO HDR ${if (front) "frontal" else "trasera"} EV=$indices")
+        Log.i(TAG, "Disparo: FOTO HDR ${if (front) "frontal" else "trasera"} EV=$indices lente=${Lens.name(lens)}")
 
         fun finish(bracket: Pair<ByteArray, ByteArray>? = null) {
             if (hdrDeadline !== deadline) return
@@ -2966,7 +3065,7 @@ class MainActivity : ComponentActivity() {
             val original = reference
             // Durante la fusión queda ocupado para limitar memoria y mantener la medición por toma.
             saveExecutor.execute {
-                saveHdr(original, bracket, currentFilter, vivid, auto, startedAt)
+                saveHdr(original, bracket, currentFilter, vivid, auto, startedAt, lens)
             }
         }
 
@@ -3037,7 +3136,7 @@ class MainActivity : ComponentActivity() {
 
     private fun saveHdr(
         original: ByteArray?, bracket: Pair<ByteArray, ByteArray>?, filter: PhotoFilter,
-        vivid: Boolean, auto: Boolean, startedAt: Long,
+        vivid: Boolean, auto: Boolean, startedAt: Long, lens: Int = Fisheye.OFF,
     ) {
         val message = when {
             original == null -> "No se pudo tomar la foto"
@@ -3072,6 +3171,7 @@ class MainActivity : ComponentActivity() {
                     val jpeg = try {
                         bmp.setPixels(fused, 0, w, 0, 0, w, h)
                         if (auto || vivid) Enhance.bitmap(this, bmp, vivid = vivid, auto = auto)
+                        Lens.apply(bmp, lens)
                         Processing.encode(bmp, 95)
                     } finally {
                         bmp.recycle()
@@ -3592,10 +3692,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Aviso para los modos que tardan en procesar. */
-    private fun processingNote(m: Mode, dark: Boolean = false): String? = when {
+    private fun processingNote(m: Mode, dark: Boolean = false, lens: Int = Fisheye.OFF): String? = when {
         m == Mode.PORTRAIT -> "Procesando retrato…"
         m == Mode.NIGHT -> "Juntando las fotos de noche…"
         dark && (m == Mode.PHOTO || m == Mode.INSTANT) -> "Mejorando la foto de noche…"
+        lens == Fisheye.WIDE -> "Curvando la foto…"
+        lens == Fisheye.MIRROR -> "Armando el espejo…"
         else -> null
     }
 
@@ -3633,6 +3735,7 @@ class MainActivity : ComponentActivity() {
         val currentFilter = filter
         // Viva se decide al disparar (si se apaga mientras se procesa, esta foto igual la lleva)
         val vivid = vividActive()
+        val lens = lensNow()
         // Con el modo noche apagado la foto se trata como una normal (sin subirla de más)
         val dark = lowLight && nightAuto
         // De noche la foto se sube igual que la vista previa (con el brillo que eligió el usuario)
@@ -3644,7 +3747,7 @@ class MainActivity : ComponentActivity() {
         shotAt = android.os.SystemClock.elapsedRealtime()
         Log.i(TAG, "Disparo: ${currentMode.name} ${if (front) "frontal" else "trasera"} noche=$dark ganancia=" +
             String.format(java.util.Locale.US, "%.2f", digitalGain) + " ev=$evBias fotos=${1 + burst} live=$live " +
-            "viva=$vivid zsl=$zslAsked pantalla=$screenLit al-apoyar=${pre != null}")
+            "viva=$vivid lente=${Lens.name(lens)} zsl=$zslAsked pantalla=$screenLit al-apoyar=${pre != null}")
         // Foto al apoyar el dedo: el instante ya quedó; el aviso (clic) va al soltar
         if (pre == null) holdStart(1 + burst)
         if (live && pre == null) {
@@ -3670,9 +3773,9 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     busy = false
                     if (live) livePill.visibility = View.GONE
-                    if (pre != null) processingStart(processingNote(currentMode, dark))
+                    if (pre != null) processingStart(processingNote(currentMode, dark, lens))
                 }
-                saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG, vivid)
+                saveFinished(currentMode, p, c, ex, live, front, currentFilter, dark, aim, maxG, vivid, lens)
             }
             if (pre == null) save()
             else pre.ready(save) {
@@ -3723,13 +3826,13 @@ class MainActivity : ComponentActivity() {
                             grabBurst(burst) { list ->
                                 synchronized(lock) { extras = list }
                                 // Ya se puede mover: lo que sigue es procesar
-                                holdEnd(processing = true, note = processingNote(currentMode, dark))
+                                holdEnd(processing = true, note = processingNote(currentMode, dark, lens))
                                 finishOne()
                             }
                         }
                     } else {
                         if (pre == null) main.post {
-                            holdEnd(processing = true, note = if (bytes != null) processingNote(currentMode, dark) else null)
+                            holdEnd(processing = true, note = if (bytes != null) processingNote(currentMode, dark, lens) else null)
                         }
                         finishOne()
                     }
@@ -3750,6 +3853,7 @@ class MainActivity : ComponentActivity() {
     private fun saveFinished(
         currentMode: Mode, p: ByteArray?, c: MotionRecorder.Clip?, ex: List<ByteArray>, live: Boolean,
         front: Boolean, currentFilter: PhotoFilter, dark: Boolean, aim: Float, maxG: Float, vivid: Boolean = false,
+        lens: Int = Fisheye.OFF,
     ) {
         saveExecutor.execute {
             run {
@@ -3780,7 +3884,7 @@ class MainActivity : ComponentActivity() {
                             else -> Processing.night(base, currentFilter)
                         }
                     }
-                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG, ex, vivid)
+                    else -> saveResult(p, c, live, currentFilter, dark, aim, maxG, ex, vivid, lens)
                 }
             }
         }
@@ -4009,6 +4113,7 @@ class MainActivity : ComponentActivity() {
     private fun saveResult(
         photo: ByteArray?, clip: MotionRecorder.Clip?, live: Boolean, f: PhotoFilter, dark: Boolean = false,
         aim: Float = 0f, maxG: Float = 1f, extras: List<ByteArray> = emptyList(), vivid: Boolean = false,
+        lens: Int = Fisheye.OFF,
     ) {
         if (photo == null) {
             finishSave("No se pudo tomar la foto")
@@ -4019,7 +4124,8 @@ class MainActivity : ComponentActivity() {
                 (dark || extras.isNotEmpty()) && !isHuge(photo) -> {
                     val base = mergeNightBitmap(photo, extras) ?: Processing.decode(photo, 4096)
                     val jpeg = try {
-                        val bmp = Enhance.bitmap(this, base, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
+                        // El ojo de pez va después de la mejora y antes del filtro (como la vista previa)
+                        val bmp = Lens.apply(Enhance.bitmap(this, base, night = dark, aim = aim, maxGain = maxG, vivid = vivid), lens)
                         try {
                             Processing.encode(bmp, 95)
                         } finally {
@@ -4030,12 +4136,12 @@ class MainActivity : ComponentActivity() {
                     }
                     MotionPhotoWriter.applyFilter(jpeg, f)
                 }
-                dark || extras.isNotEmpty() -> photo
+                dark || extras.isNotEmpty() -> Lens.jpeg(photo, lens)
                 Enhance.enabled(this) || f != PhotoFilter.ORIGINAL || vivid -> {
-                    val jpeg = Enhance.jpeg(this, photo, night = dark, aim = aim, maxGain = maxG, vivid = vivid)
+                    val jpeg = Enhance.jpeg(this, photo, night = dark, aim = aim, maxGain = maxG, vivid = vivid, lens = lens)
                     MotionPhotoWriter.applyFilter(jpeg, f)
                 }
-                else -> photo
+                else -> Lens.jpeg(photo, lens)
             }
         } catch (e: Exception) {
             Log.e(TAG, "No se pudo mejorar la foto", e)

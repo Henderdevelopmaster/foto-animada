@@ -60,6 +60,10 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 ### Barra de abajo
 
 - **Zoom** (1x, 2x).
+- **Ojo de pez** (a la izquierda del 1x, solo en FOTO y con Android 13 o más nuevo): cada toque
+  pasa por **Gran angular** → **Espejo de tienda** → apagado. **Apagado al abrir la app** (no
+  queda guardado). Prendido = ícono amarillo con aro amarillo (marco abombado para gran angular,
+  espejo redondo para espejo). Tocarlo cierra cualquier panel abierto. Ver sección 5.
 - **±** (izquierda): abre/cierra la regla de brillo (de −2 a +2). El valor queda puesto y se ve
   en amarillo. Mantener el ± o doble toque en la regla vuelve a automático.
 - **Viva** (derecha, dos destellos): prende/apaga Viva. **Apagado por defecto**; queda guardado
@@ -163,6 +167,27 @@ Ajustes > Disparo. No funciona con el flash LED encendido o automático (lo dice
 | Se apaga mientras se procesa | La foto que ya se tomó igual sale con Viva (se decide al disparar) |
 | Fotos viejas | En el visor, menú (⋯) > **Viva**: alterna Original y Viva en una vista previa. Solo **Guardar copia** crea un JPEG quieto |
 | Modo MÁX (200 MP) | Sin Viva ni mejora: la foto gigante se deja con todo su detalle |
+
+### Ojo de pez: qué hace y qué se espera
+
+Es un efecto, no un lente: la cámara 0.6 de Hender está dañada y desde la 1x no se puede ver
+más campo del que el sensor ve. El efecto curva ese mismo campo como un lente de acción.
+
+| Qué | Resultado esperado |
+|---|---|
+| Gran angular | Toda la foto curvada: el centro se acerca un poco, los bordes se comprimen y las esquinas siguen siendo las esquinas. Borde un poco más oscuro, como un lente de verdad |
+| Espejo de tienda | La foto entera dentro de un espejo redondo y abombado, con aro metálico, brillo suave arriba a la izquierda y el fondo oscuro y borroso. Las caras del centro no se aplastan aunque la foto sea 3:4 o 9:16 |
+| Vista previa | Se ve igual que la foto (mismo cálculo en un shader). El filtro de color se pinta después del lente, como en la foto |
+| Calidad | Mismo tamaño que la foto normal. Centro con interpolación cúbica (no queda blando) y bordes comprimidos sin dientes ni moiré. El fondo del espejo es un poco más suave en la foto que en la vista previa |
+| Cel de lado | La foto sale de lado y el brillo del espejo queda arriba a la izquierda de quien mira (también en la vista previa) |
+| Toque para enfocar | Enfoca lo que se ve en ese punto (con ojo de pez viene de otro lugar del sensor) |
+| LIVE | En pausa mientras haya ojo de pez (el video saldría derecho y la foto curva): el botón LIVE queda tenue y el aviso lo dice. Al apagar el ojo de pez, LIVE vuelve |
+| Noche, Viva, filtro, HDR | Se combinan: primero la mejora (y Viva), después el ojo de pez y al final el filtro |
+| Ráfaga y QuickTake | Sin ojo de pez: mientras duran, la vista previa vuelve derecha |
+| Otros modos | El botón no sale y las fotos van derechas. Al volver a FOTO sigue como estaba |
+| Si falla (memoria) | Se guarda la foto sin el efecto (nunca se pierde) y queda en el registro |
+| Modo MÁX | La foto con ojo de pez sale de 4096 px de lado (así cabe en memoria) |
+| Tiempo | Medio segundo a un segundo más de procesado por foto en el Redmi (por estimar en el cel: registro `Lens: Ojo de pez … en N ms`). La cámara queda libre para la siguiente foto |
 
 ## 6. Flash
 
@@ -343,6 +368,21 @@ secuencia con movimiento y se valide el margen de exposición.
 27. Repetir en frontal, trasera y de lado. Activar LIVE, flash o MÁX para comprobar que vuelve
     el disparo normal. Exportar el registro y revisar los resultados por ID en «Capacidades
     Camera2». La disponibilidad real y las mediciones del Redmi quedan pendientes del equipo.
+
+### Ojo de pez (pruebas en el Redmi)
+
+- FOTO: tocar el botón de ojo de pez (a la izquierda del 1x). La vista previa se curva al
+  instante y sale "Gran angular (efecto)". Tomar una foto y compararla en la galería con lo que
+  se vio (encuadre, curva y viñeta). Otro toque: "Espejo de tienda"; otro: "Ojo de pez apagado".
+- Con LIVE prendido: al prender el ojo de pez sale "· LIVE en pausa" y el botón LIVE queda tenue;
+  la foto se guarda sin movimiento y sin aviso de error. Al apagarlo vuelve el LIVE.
+- Espejo con el cel de lado: el brillo y la sombra del espejo deben quedar arriba a la izquierda
+  y abajo, vistos de frente, en la vista previa y en la foto.
+- Tocar una cara en el borde del espejo: debe enfocar esa cara.
+- Repetir con filtro, con Viva, de noche (lunita), con HDR y en formatos 1:1 y 9:16.
+- Ráfaga y QuickTake con ojo de pez: la vista previa vuelve derecha mientras duran y las fotos
+  salen derechas.
+- Compartir registro: buscar `Lens: Ojo de pez … en N ms` para saber cuánto tarda en el cel.
 
 ### Orientación y registro (pruebas en el Redmi)
 

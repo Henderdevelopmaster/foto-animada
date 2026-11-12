@@ -296,6 +296,19 @@
             android:layout_marginBottom="64dp"
             android:orientation="horizontal">
 
+            <!-- Ojo de pez (gran angular o espejo de tienda). Apagado al abrir la app -->
+            <ImageButton
+                android:id="@+id/lensButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="10dp"
+                android:background="@drawable/bg_lens"
+                android:contentDescription="Ojo de pez apagado. Toca para gran angular"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_fisheye"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/zoom1"
                 android:layout_width="40dp"
