@@ -23,8 +23,34 @@ object Bracket {
             "range=${String.format(java.util.Locale.US, "%.1f", range)}x"
     }
 
+    /** Índices en orden de captura: centro, oscuro y claro. */
+    fun hdrExposureIndices(center: Int, step: Float, lower: Int, upper: Int): List<Int>? {
+        if (!step.isFinite() || step <= 0f || center !in lower..upper) return null
+        val margin = minOf(center.toLong() - lower, upper.toLong() - center)
+        val delta = (1.5f / step).roundToInt().coerceAtLeast(1).toLong().coerceAtMost(margin)
+        if (delta * step < 0.75f) return null
+        return listOf(center, (center - delta).toInt(), (center + delta).toInt())
+    }
+
+    /** [frames] en orden oscuro, centro, claro. Devuelve null si es más seguro guardar la toma central. */
+    fun fuseHdr(frames: List<IntArray>, w: Int, h: Int, threads: Int): Pair<IntArray, Report>? {
+        if (frames.size != 3 || w <= 0 || h <= 0 || threads <= 0 ||
+            frames.any { it.size.toLong() != w.toLong() * h }
+        ) return null
+        return fuseBracket(frames, w, h, threads, rejectMotion = true)
+    }
+
     /** [frames] en ARGB, del mismo tamaño, de la más oscura a la más clara. */
-    fun fuse(frames: List<IntArray>, w: Int, h: Int, threads: Int = 4): Pair<IntArray, Report> {
+    fun fuse(frames: List<IntArray>, w: Int, h: Int, threads: Int = 4): Pair<IntArray, Report> =
+        checkNotNull(fuseBracket(frames, w, h, threads, rejectMotion = false))
+
+    private fun fuseBracket(
+        frames: List<IntArray>,
+        w: Int,
+        h: Int,
+        threads: Int,
+        rejectMotion: Boolean,
+    ): Pair<IntArray, Report>? {
         require(frames.isNotEmpty()) { "Sin fotos para juntar" }
         val n = frames.size
         if (n == 1) return frames[0].copyOf() to Report(listOf(0 to 0), listOf(1f), 1f)
@@ -38,6 +64,7 @@ object Bracket {
         // Tablas: 8 bits -> luz lineal, y cuánto pesa cada valor
         val lin = FloatArray(256) { toLinear(it) }
         val wgt = FloatArray(256) { weight(it / 255f) + 1e-3f }
+        val channels = intArrayOf(16, 8, 0)
 
         fun at(i: Int, x: Int, y: Int): Int {
             val sx = (x + shifts[i].first).coerceIn(0, w - 1)
@@ -58,7 +85,7 @@ object Bracket {
                 while (x < w) {
                     val ca = at(ref, x, y)
                     val cb = at(i, x, y)
-                    for (sh in intArrayOf(16, 8, 0)) {
+                    for (sh in channels) {
                         val va = (ca shr sh) and 255
                         val vb = (cb shr sh) and 255
                         if (va in 12..232 && vb in 12..232) ratios.add(lin[vb] / lin[va])
@@ -67,10 +94,22 @@ object Bracket {
                 }
                 y += stepY
             }
+            if (rejectMotion && ratios.size <= 50) return null
             scales[i] = if (ratios.size > 50) {
                 ratios.sort()
                 ratios[ratios.size / 2].coerceIn(0.05f, 20f)
             } else if (i < ref) 0.5f else 2f
+        }
+
+        if (rejectMotion) {
+            if (scales[0] >= 0.9f || scales[2] <= 1.1f) return null
+            for (i in frames.indices) {
+                if (i == ref) continue
+                val (dx, dy) = shifts[i]
+                if (abs(dx) > w / 25 || abs(dy) > h / 25 ||
+                    hasLocalMotion(frames[ref], frames[i], w, h, dx, dy, scales[i], lin, channels)
+                ) return null
+            }
         }
 
         /** Radiancia de un píxel: promedio ponderado de las tomas, ya sin su exposición. */
@@ -126,6 +165,52 @@ object Bracket {
             }.also { it.start() }
         }.forEach { it.join() }
         return out to Report(shifts.toList(), scales.toList(), range)
+    }
+
+    /** Compara muestras por zona después de alinear y compensar la exposición. */
+    private fun hasLocalMotion(
+        reference: IntArray,
+        other: IntArray,
+        w: Int,
+        h: Int,
+        dx: Int,
+        dy: Int,
+        scale: Float,
+        linear: FloatArray,
+        channels: IntArray,
+    ): Boolean {
+        val tileWidth = max(4, (w + 19) / 20)
+        val tileHeight = max(4, (h + 19) / 20)
+        val sampleX = max(1, tileWidth / 8)
+        val sampleY = max(1, tileHeight / 8)
+        for (top in 0 until h step tileHeight) for (left in 0 until w step tileWidth) {
+            var samples = 0
+            var mismatches = 0
+            for (y in top until minOf(top + tileHeight, h) step sampleY) {
+                if (y + dy !in 0 until h) continue
+                for (x in left until minOf(left + tileWidth, w) step sampleX) {
+                    if (x + dx !in 0 until w) continue
+                    val a = reference[y * w + x]
+                    val b = other[(y + dy) * w + x + dx]
+                    samples++
+                    for (shift in channels) {
+                        val va = (a shr shift) and 255
+                        val vb = (b shr shift) and 255
+                        val expected = (linear[va] * scale).coerceAtMost(1f)
+                        val actual = linear[vb]
+                        // Un blanco recortado solo indica un mínimo, no su brillo exacto.
+                        if ((va >= 250 && actual >= expected) || (vb >= 250 && expected >= actual)) continue
+                        val tolerance = max(0.045f, max(expected, actual) * 0.24f)
+                        if (abs(expected - actual) > tolerance) {
+                            mismatches++
+                            break
+                        }
+                    }
+                }
+            }
+            if (mismatches >= 6 && mismatches * 5 >= samples * 2) return true
+        }
+        return false
     }
 
     // ------------------------------------------------------------------ curvas

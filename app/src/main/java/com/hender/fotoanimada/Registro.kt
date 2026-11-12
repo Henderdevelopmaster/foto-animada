@@ -144,6 +144,8 @@ object Registro {
         if (power?.isPowerSaveMode == true) append(" · ahorro de batería prendido")
         append('\n')
         append("Ajustes: ").append(settings).append("\n\n")
+        append("===== Capacidades Camera2 =====\n")
+        append(CameraDiagnostics.inspect(context)).append("\n\n")
 
         val crash = File(context.filesDir, CRASH_FILE)
         if (crash.exists()) {

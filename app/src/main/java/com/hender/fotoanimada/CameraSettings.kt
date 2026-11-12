@@ -61,6 +61,8 @@ object CameraSettings {
     /** Viva (botón en el visor): "on" = más nitidez, contraste y color. Apagado por defecto. */
     const val VIVID = "vivid"
 
+    const val HDR = "hdr"
+
     /** Panel de rendimiento (Ajustes): "on" = muestra fps, demora del disparo y memoria. */
     const val PERF = "perf"
 

@@ -358,10 +358,13 @@ class MainActivity : ComponentActivity() {
         setupZoomAndFocus()
 
         liveToggle.setOnClickListener {
+            if (hdrDeadline != null) return@setOnClickListener
+            val wasHdrSession = hdrSession(mode)
             liveOn = !liveOn
             prefs.edit().putBoolean(KEY_LIVE, liveOn).apply()
             tap(it)
             applyModeUi()
+            if (wasHdrSession != hdrSession(mode)) bindCamera()
             showToast(if (liveOn) "LIVE activado" else "LIVE desactivado")
         }
         filterButton.setOnClickListener {
@@ -487,6 +490,7 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         dropPreShot()
         liveClipDeadline?.run()
+        hdrDeadline?.run()
         hideFilterBar()
         main.removeCallbacks(volLongPress)
         volHeld = false
@@ -521,6 +525,7 @@ class MainActivity : ComponentActivity() {
         cancelCountdown()
         val old = mode
         val rebind = groupOf(old) != groupOf(m) || aspectOf(old) != aspectOf(m) ||
+            hdrSession(old) != hdrSession(m) ||
             (m == Mode.EFFECTS && lensFacing != CameraSelector.LENS_FACING_FRONT)
         if (rebind) freezePreview()
         clearFocusLock()
@@ -1148,6 +1153,10 @@ class MainActivity : ComponentActivity() {
             Seg("on", "Automático", "De noche junta varias fotos y sube el brillo (sale la lunita)"),
             Seg("off", "Apagado", "Una sola foto, sin subir el brillo de más"),
         ), def = "on", rebind = false)
+        section("HDR en Foto", CameraSettings.HDR, listOf(
+            Seg("off", "Apagado", "Disparo normal"),
+            Seg("on", "Encendido", "Combina tres exposiciones en FOTO con buena luz, LIVE y flash apagados"),
+        ), def = "off", rebind = mode == Mode.PHOTO && !liveOn)
         section("Belleza", CameraSettings.BEAUTY, listOf(
             Seg("off", "Apagada", "Piel natural: sin alisar ni retocar la cara"),
             Seg("on", "Encendida", "Usa tus ajustes de belleza (en Efectos) y alisa un poco la piel"),
@@ -1504,6 +1513,7 @@ class MainActivity : ComponentActivity() {
         append(" ganancia=").append(String.format(java.util.Locale.US, "%.2f", digitalGain))
         append(" mejora=").append(Enhance.enabled(this@MainActivity))
         append(" viva=").append(vividOn)
+        append(" hdr=").append(hdrEnabled())
         append(" belleza=").append(Beauty.enabled)
         append(" selfie=").append(if (mirrorSelfies()) "como-te-ves" else "como-te-ven")
         append(" live=").append(liveActive)
@@ -2315,6 +2325,10 @@ class MainActivity : ComponentActivity() {
             mode == Mode.INSTANT && boomKind != "photo" -> captureBoomerang()
             mode == Mode.MOON -> captureMoon()
             mode == Mode.SUNSET -> captureSunset()
+            mode == Mode.PHOTO -> {
+                val indices = hdrPlan()
+                if (indices == null) takeStill() else captureHdr(indices)
+            }
             else -> takeStill()
         }
     }
@@ -2657,7 +2671,7 @@ class MainActivity : ComponentActivity() {
     private fun applyDeviceRotation() {
         watchOrientation()
         val r = Orientation.surfaceRotation(deviceDegrees)
-        imageCapture?.targetRotation = r
+        if (hdrDeadline == null) imageCapture?.targetRotation = r
         videoCapture?.targetRotation = r
         rotatingAnalysis?.targetRotation = r
         rotateControls()
@@ -2747,7 +2761,8 @@ class MainActivity : ComponentActivity() {
     private var zslBroken = false
     private var stateWatched: androidx.lifecycle.LiveData<androidx.camera.core.CameraState>? = null
 
-    private fun useZsl() = !zslBroken && CameraSettings.get(this, CameraSettings.ZSL, "on") == "on"
+    private fun useZsl() = !hdrSession(mode) && !zslBroken &&
+        CameraSettings.get(this, CameraSettings.ZSL, "on") == "on"
 
     @androidx.annotation.OptIn(androidx.camera.core.ExperimentalZeroShutterLag::class)
     private fun zslSupported() = !zslBroken && (camera?.cameraInfo?.isZslSupported ?: false)
@@ -2886,6 +2901,7 @@ class MainActivity : ComponentActivity() {
 
     /** Compensación de exposición: más oscuro en atardecer (cielo con color) y luna sin control manual. */
     private fun applyExposure() {
+        if (hdrDeadline != null) return
         val cam = camera ?: return
         val st = cam.cameraInfo.exposureState
         if (!st.isExposureCompensationSupported) return
@@ -2904,6 +2920,174 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun Float.roundToIntSafe() = kotlin.math.round(this).toInt()
+
+    private var hdrDeadline: Runnable? = null
+
+    private fun hdrEnabled() = CameraSettings.get(this, CameraSettings.HDR, "off") == "on"
+
+    private fun hdrSession(m: Mode) = m == Mode.PHOTO && !liveOn && hdrEnabled() &&
+        CameraSettings.photo(this) != "max"
+
+    private fun hdrPlan(): List<Int>? {
+        if (!hdrSession(mode) || flashMode != "off" || lowLight || aeLocked ||
+            frozen || pendingSaves > 0 || zslAsked) return null
+        val state = camera?.cameraInfo?.exposureState ?: return null
+        if (!state.isExposureCompensationSupported) return null
+        val range = state.exposureCompensationRange
+        return Bracket.hdrExposureIndices(
+            state.exposureCompensationIndex, state.exposureCompensationStep.toFloat(), range.lower, range.upper,
+        )
+    }
+
+    private fun captureHdr(indices: List<Int>) {
+        val cam = camera ?: return
+        if (busy || imageCapture == null) return
+        busy = true
+        closePanels()
+        perf?.pressed()
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        shotAt = startedAt
+        val currentFilter = filter
+        val vivid = vividActive()
+        val auto = Enhance.enabled(this)
+        var reference: ByteArray? = null
+        var cancelled = false
+        lateinit var deadline: Runnable
+        holdStart(3)
+        Log.i(TAG, "Disparo: FOTO HDR ${if (front) "frontal" else "trasera"} EV=$indices")
+
+        fun finish(bracket: Pair<ByteArray, ByteArray>? = null) {
+            if (hdrDeadline !== deadline) return
+            hdrDeadline = null
+            main.removeCallbacks(deadline)
+            applyExposure()
+            applyDeviceRotation()
+            holdEnd(processing = true, note = if (bracket != null) "Juntando las exposiciones…" else null)
+            val original = reference
+            // Durante la fusión queda ocupado para limitar memoria y mantener la medición por toma.
+            saveExecutor.execute {
+                saveHdr(original, bracket, currentFilter, vivid, auto, startedAt)
+            }
+        }
+
+        deadline = Runnable {
+            cancelled = true
+            if (reference != null) finish()
+        }
+        hdrDeadline = deadline
+
+        fun takeExtra(index: Int, done: (ByteArray) -> Unit) {
+            if (hdrDeadline !== deadline || cancelled || camera !== cam) {
+                finish()
+                return
+            }
+            val target = try {
+                cam.cameraControl.setExposureCompensationIndex(index)
+            } catch (e: Exception) {
+                Log.w(TAG, "HDR: no se pudo pedir la exposición $index", e)
+                finish()
+                return
+            }
+            target.addListener({
+                if (hdrDeadline === deadline && !cancelled) {
+                    try {
+                        target.get()
+                        grab(onStarted = { if (hdrDeadline === deadline) shotTaken(sound = false) }) { bytes ->
+                            main.post {
+                                if (hdrDeadline === deadline) {
+                                    if (bytes == null) finish() else done(bytes)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "HDR: no se pudo capturar la exposición $index", e)
+                        finish()
+                    }
+                }
+            }, ContextCompat.getMainExecutor(this))
+        }
+
+        try {
+            grab(onStarted = {
+                if (hdrDeadline === deadline) {
+                    perf?.captured()
+                    shotTaken(sound = true)
+                }
+            }) { bytes ->
+                main.post {
+                    if (hdrDeadline === deadline) {
+                        reference = bytes
+                        if (bytes == null || cancelled) finish()
+                        else {
+                            main.postDelayed(deadline, 4_000L)
+                            takeExtra(indices[1]) { low ->
+                                takeExtra(indices[2]) { high ->
+                                    finish(low to high)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "HDR: no se pudo tomar la foto de referencia", e)
+            finish()
+        }
+    }
+
+    private fun saveHdr(
+        original: ByteArray?, bracket: Pair<ByteArray, ByteArray>?, filter: PhotoFilter,
+        vivid: Boolean, auto: Boolean, startedAt: Long,
+    ) {
+        val message = when {
+            original == null -> "No se pudo tomar la foto"
+            bracket == null -> saveOriginalPhoto(original)
+            else -> try {
+                val center = Processing.decode(original, 2400)
+                val w = center.width
+                val h = center.height
+                val reference = try {
+                    IntArray(w * h).also { center.getPixels(it, 0, w, 0, 0, w, h) }
+                } finally {
+                    center.recycle()
+                }
+                fun pixels(jpeg: ByteArray): IntArray {
+                    val bmp = Processing.decode(jpeg, 2400)
+                    return try {
+                        require(bmp.width == w && bmp.height == h) { "Las exposiciones tienen tamaños distintos" }
+                        IntArray(w * h).also { bmp.getPixels(it, 0, w, 0, 0, w, h) }
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+                val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+                val merged = Bracket.fuseHdr(listOf(pixels(bracket.first), reference, pixels(bracket.second)), w, h, threads)
+                if (merged == null) {
+                    Log.i(TAG, "HDR: exposiciones descartadas, guardando la referencia")
+                    saveOriginalPhoto(original)
+                } else {
+                    val (fused, report) = merged
+                    Log.i(TAG, "HDR: $report")
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val jpeg = try {
+                        bmp.setPixels(fused, 0, w, 0, 0, w, h)
+                        if (auto || vivid) Enhance.bitmap(this, bmp, vivid = vivid, auto = auto)
+                        Processing.encode(bmp, 95)
+                    } finally {
+                        bmp.recycle()
+                    }
+                    MotionPhotoWriter.save(this, MotionPhotoWriter.applyFilter(jpeg, filter), null, "_HDR")
+                    null
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "HDR: no se pudo guardar la fusión", e)
+                saveOriginalPhoto(original)
+            }
+        }
+        Log.i(TAG, "HDR: guardado terminó en ${android.os.SystemClock.elapsedRealtime() - startedAt} ms")
+        finishSave(message)
+        runOnUiThread { busy = false }
+    }
 
     private fun buildMoonPanel() {
         val parent = findViewById<View>(R.id.zoomBar).parent as FrameLayout
@@ -3644,7 +3828,7 @@ class MainActivity : ComponentActivity() {
     private fun canPreShoot() = mode == Mode.PHOTO && timerSecs == 0 && !countingDown && !busy &&
         recording == null && !bursting && !quickTaking && imageCapture != null &&
         developOverlay.visibility != View.VISIBLE && !wantsScreenFlash() && !ledFlashFires() &&
-        !(lowLight && nightAuto)
+        !(lowLight && nightAuto) && hdrPlan() == null
 
     private fun startPreShot() {
         if (!canPreShoot()) return
@@ -3717,7 +3901,7 @@ class MainActivity : ComponentActivity() {
         file.delete()
     }
 
-    /** Una foto a memoria (para fotomatón). */
+    /** Una foto a memoria para capturas de varias tomas. */
     private fun grab(onStarted: (() -> Unit)? = null, onDone: (ByteArray?) -> Unit) {
         val ic = imageCapture ?: return onDone(null)
         val f = File(cacheDir, "grab_${System.nanoTime()}.jpg")
@@ -3732,7 +3916,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    Log.e(TAG, "Foto del fotomatón", exception)
+                    Log.e(TAG, "No se pudo tomar una foto de la secuencia", exception)
                     f.delete()
                     onDone(null)
                 }

@@ -3,7 +3,7 @@
 Este documento es la referencia de la app. Cualquier cambio, lo haga Claude o Codex, tiene que
 cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 
-Última revisión: 11 de noviembre de 2026. Si cambias algo de la app, actualiza este documento.
+Última revisión: 12 de noviembre de 2026. Si cambias algo de la app, actualiza este documento.
 
 ---
 
@@ -91,6 +91,7 @@ cumplir estas reglas. Si algo de la app no hace lo que dice aquí, es un error.
 | FOTO, toque | Una foto | Al **apoyar** el dedo | Clic y parpadeo al soltar (con LIVE, solo parpadeo) |
 | FOTO, mantener | QuickTake (video) | Mientras se mantiene | Sonido de inicio/fin, contador |
 | FOTO, deslizar a la izquierda | Ráfaga (hasta 50) | Una tras otra | Clic en cada foto real, contador |
+| FOTO con HDR habilitado y disponible | Junta tres exposiciones | Al confirmar el toque, primero toma la exposición normal | «Quieto · n de 3», luego aro hasta guardar |
 | FOTO de noche (lunita amarilla) | Junta 4 fotos | Desde el toque, ~1 s | "Quieto · n de 4", "Listo, ya puedes moverte" y "Mejorando la foto de noche…" con el aro; la foto aparece ya lista |
 | Con flash (pantalla o LED) | Una foto | Cuando el flash ya iluminó | Pantalla blanca o LED; clic al tomarse |
 | Con temporizador | Cuenta y toma | Al terminar la cuenta | Números grandes en el centro |
@@ -176,6 +177,20 @@ Belleza, Sonido de la cámara, Mejora automática, **Viva** (igual que el botón
 Video, Live/QuickTake/time-lapse, Video con efectos y **Rendimiento**. La hoja se desliza si no
 cabe y se cierra tocando fuera o con "Listo".
 
+- **HDR en Foto** (apagado por defecto) combina tres exposiciones para recuperar detalle a
+  contraluz. Se usa en FOTO con buena luz, LIVE y flash apagados, sin bloqueo AE/AF, con espacio
+  para variar la exposición a ambos lados y en una calidad distinta de MÁX. En el resto de los
+  casos se conserva el disparo normal. En una sesión FOTO con HDR habilitado y LIVE apagado
+  se suspende ZSL para evitar usar cuadros de otra exposición. El HDR se inicia al soltar el
+  obturador o el botón de volumen, o al terminar el temporizador. La ráfaga y QuickTake
+  conservan sus gestos.
+- La vista previa HDR conserva el encuadre y los ajustes normales. La fusión se calcula después
+  de la toma. Si funciona, queda un JPEG con lado mayor de hasta 2400 px y el filtro y Viva
+  elegidos al disparar. Si falta una exposición, se detecta movimiento o falla el guardado de
+  la fusión, se intenta guardar la captura normal. Las exposiciones adicionales esperan hasta
+  4 s después de la primera captura. Al salir de la cámara se cancela la fusión pendiente y se
+  intenta guardar la captura normal si está disponible.
+
 - Solo lo que cambia la cámara la vuelve a abrir al cerrar Ajustes (tamaño de foto, disparo,
   video, Live, efectos). Lo demás (selfies, noche, belleza, sonido, mejora, Viva, rendimiento)
   se aplica sin cortar la vista previa.
@@ -188,6 +203,9 @@ cabe y se cierra tocando fuera o con "Listo".
   ajustes, el último cierre inesperado (si hubo) y lo que la app anotó (disparos, fotos de noche,
   mejoras y tiempos). Queda en Descargas/Camaratrix y se abre el menú de compartir. No lleva
   fotos. Es lo que hay que mandar cuando algo falla.
+  La sección «Capacidades Camera2» enumera las cámaras que Android deja abrir e informa
+  extensiones, RAW, Ultra HDR, Low Light Boost y rango EV por cámara. Es una consulta de
+  capacidades y se hace en segundo plano al exportar el registro.
 
 ## 8. Guardado
 
@@ -313,6 +331,12 @@ descarga `Camaratrix-dev-<número>` desde Artifacts y extrae el APK del ZIP.
 25. En VIDEO, tocar dos veces seguidas para detener una grabación. Debe sonar y empezar a
     guardar una vez, y el aro debe apagarse cuando termine. Activar TalkBack y comprobar que
     el obturador anuncia y ejecuta la acción de FOTO, VIDEO y TIME-LAPSE.
+26. HDR en Foto: con LIVE y flash apagados, fotografiar una ventana con detalle exterior y
+    sombras interiores. Comparar con HDR apagado. Repetir con movimiento y al salir de la
+    cámara durante «Quieto». Si se descarta la fusión debe quedar la captura normal.
+27. Repetir en frontal, trasera y de lado. Activar LIVE, flash o MÁX para comprobar que vuelve
+    el disparo normal. Exportar el registro y revisar los resultados por ID en «Capacidades
+    Camera2». La disponibilidad real y las mediciones del Redmi quedan pendientes del equipo.
 
 ### Orientación y registro (pruebas en el Redmi)
 
