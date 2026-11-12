@@ -1,0 +1,41 @@
+name: Prueba de cámara en emulador
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/smoke-camera.yml
+      - scripts/smoke_camera.sh
+      - app/src/main/java/com/hender/fotoanimada/Bracket.kt
+      - app/src/main/java/com/hender/fotoanimada/CameraDiagnostics.kt
+
+permissions:
+  contents: read
+
+jobs:
+  camera:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar APK
+        run: ./gradlew assembleDebug
+
+      - name: Preparar emulador Android
+        run: |
+          sudo chgrp "$(id -gn)" /dev/kvm
+          sudo chmod g+rw /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            emulator "system-images;android-35;google_apis;x86_64"
+
+      - name: Tomar y verificar dos fotos
+        run: bash scripts/smoke_camera.sh app/build/outputs/apk/debug/app-debug.apk

@@ -286,6 +286,12 @@ cabe y se cierra tocando fuera o con "Listo".
 Para probar `dev` en el cel, abre la ejecución de «Compilar APK» en GitHub Actions,
 descarga `Camaratrix-dev-<número>` desde Artifacts y extrae el APK del ZIP.
 
+GitHub Actions también puede abrir Camaratrix en un emulador Android y verificar que se
+guarde un JPEG completo tanto con el ajuste HDR apagado como encendido. El emulador permite
+probar la ruta de guardado y el respaldo cuando la cámara virtual no admite la fusión.
+Las pruebas JVM de `Bracket` comprueban que se recupere detalle en luces, se descarte una
+secuencia con movimiento y se valide el margen de exposición.
+
 1. FOTO a algo que se mueva (carro, tren, mano): la foto debe mostrar el instante del toque.
 2. FOTO con LIVE: al abrir, el movimiento corto debe terminar en la foto. Al mantener, revisar
    que el clip incluya el movimiento antes y después de la marca de la foto y que al soltar vuelva
